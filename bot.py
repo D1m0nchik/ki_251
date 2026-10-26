@@ -17,7 +17,7 @@ async def start_handler(message: types.Message):
             [
                 InlineKeyboardButton(
                     text="Відкрити розклад групи 📲",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/app/")
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}")
                 )
             ]
         ]

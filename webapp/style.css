@@ -134,22 +134,52 @@ body {
   cursor: pointer;
 }
 
+/* Адаптивний блок фільтра дат */
+.filter-card {
+  box-sizing: border-box;
+  width: 100%;
+  overflow: hidden;
+}
+
+.filter-card h4 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+}
+
 .filter-card .date-inputs {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap; /* Дозволяє перенос кнопки на новий рядок за потреби */
   align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .filter-card input {
-  width: 100px;
-  padding: 6px;
+  flex: 1 1 110px; /* Гнучка ширина */
+  min-width: 0;
+  padding: 8px 10px;
   background: #121217;
   border: 1px solid #2a2a38;
   color: #fff;
-  border-radius: 6px;
+  border-radius: 8px;
   text-align: center;
+  font-size: 13px;
+  box-sizing: border-box;
 }
 
+.filter-card span {
+  color: var(--text-muted);
+  font-weight: bold;
+}
+
+.filter-card .btn-primary {
+  flex: 1 1 100%; /* На смартфонах кнопка стає на всю ширину під датами */
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
 /* Модальне вікно журналу */
 .modal {
   display: none;

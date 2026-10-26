@@ -225,6 +225,58 @@ class DateRangeRequest(BaseModel):
     sdate: str
     edate: str
 
+# 1. Студент зберігає своє справжнє ПІБ та підгрупу
+class ProfileUpdateRequest(BaseModel):
+    full_name: str
+    subgroup: int
+
+@app.post("/api/user/profile")
+async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    tg_id = user.get("id")
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            UPDATE users 
+            SET full_name = ?, subgroup = ? 
+            WHERE telegram_id = ?
+        """, (data.full_name.strip(), data.subgroup, tg_id))
+        await db.commit()
+    return {"status": "ok"}
+
+# 2. Староста отримує повний список студентів для керування
+@app.get("/api/group/students")
+async def get_all_group_students(x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT role FROM users WHERE telegram_id = ?", (user.get("id"),)) as cur:
+            u = await cur.fetchone()
+            if not u or u["role"] != "starosta":
+                raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        async with db.execute("SELECT telegram_id, full_name, subgroup, role FROM users ORDER BY full_name ASC") as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+# 3. Староста перемикає підгрупу будь-якому студенту
+class ChangeSubgroupRequest(BaseModel):
+    student_tg_id: int
+    subgroup: int
+
+@app.post("/api/group/change_subgroup")
+async def change_student_subgroup(data: ChangeSubgroupRequest, x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT role FROM users WHERE telegram_id = ?", (user.get("id"),)) as cur:
+            u = await cur.fetchone()
+            if not u or u["role"] != "starosta":
+                raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        await db.execute("UPDATE users SET subgroup = ? WHERE telegram_id = ?", (data.subgroup, data.student_tg_id))
+        await db.commit()
+    return {"status": "ok"}
+    
 @app.post("/api/schedule/update_range")
 async def update_schedule_range(data: DateRangeRequest, x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)

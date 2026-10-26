@@ -197,6 +197,21 @@ class BroadcastRequest(BaseModel):
     title: str
     message: str
 
+# Отримання списку всіх оголошень (для відображення у додатку)
+@app.get("/api/announcements")
+async def get_announcements():
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT id, title, message, 
+                   strftime('%d.%m.%Y %H:%M', created_at, '+3 hours') as date_time
+            FROM announcements 
+            ORDER BY id DESC
+        """) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+# Оновлена розсилка зі збереженням у базу
 @app.post("/api/broadcast")
 async def broadcast_announcement(data: BroadcastRequest, x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)
@@ -207,9 +222,18 @@ async def broadcast_announcement(data: BroadcastRequest, x_telegram_init_data: s
             if not u or u["role"] != "starosta":
                 raise HTTPException(status_code=403, detail="Тільки староста може робити розсилку")
 
+        # 1. Зберігаємо оголошення в базу даних
+        await db.execute(
+            "INSERT INTO announcements (title, message) VALUES (?, ?)",
+            (data.title.strip(), data.message.strip())
+        )
+        await db.commit()
+
+        # 2. Отримуємо студентів для розсилки в Telegram
         async with db.execute("SELECT telegram_id FROM users") as cur:
             students = await cur.fetchall()
 
+    # 3. Розсилаємо повідомлення усім студентам
     text = f"📢 <b>{data.title}</b>\n\n{data.message}\n\n<i>— Повідомлення від старости</i>"
     success_count = 0
     for s in students:

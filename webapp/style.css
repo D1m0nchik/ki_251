@@ -7,12 +7,34 @@
   --text-muted: #8b8b9e;
 }
 
-body {
+html, body {
   margin: 0;
-  background-color: var(--bg-color);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  /* Блокує конфлікт свайпів Telegram і зависання тачів */
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
   user-select: none;
+}
+
+/* Гарантоване приховування модальних вікон, щоб вони не блокували кліки */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  pointer-events: auto;
+}
+
+/* Запобігає залипанню кнопок після натискання */
+button, select, input {
+  touch-action: manipulation;
 }
 
 .app-container {

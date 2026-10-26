@@ -1,0 +1,108 @@
+import re
+import requests
+import aiosqlite
+from bs4 import BeautifulSoup
+from database import DB_NAME
+
+URL = "https://dekanat.nung.edu.ua/cgi-bin/timetable.cgi?n=700"
+RAW_PAYLOAD = "faculty=1015&teacher=&course=0&group=%CA%B2-25-1&sdate=&edate=&n=700"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Referer": "https://dekanat.nung.edu.ua/cgi-bin/timetable.cgi?n=700"
+}
+
+def fetch_raw_schedule() -> str:
+    response = requests.post(URL, data=RAW_PAYLOAD.encode('ascii'), headers=HEADERS)
+    return response.content.decode('cp1251', errors='replace')
+
+async def update_schedule_in_db():
+    html_text = fetch_raw_schedule()
+    soup = BeautifulSoup(html_text, 'html.parser')
+    day_blocks = soup.select('.container .row > div.col-12.col-sm-6')
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Очищаємо попередній розклад перед оновленням
+        await db.execute("DELETE FROM schedule")
+
+        for day_block in day_blocks:
+            h4 = day_block.find('h4')
+            if not h4:
+                continue
+
+            small_tag = h4.find('small')
+            day_of_week = small_tag.get_text(strip=True) if small_tag else ""
+            date_str = h4.text.replace(day_of_week, '').strip()
+
+            for row in day_block.select('tbody tr'):
+                cols = row.find_all('td')
+                if len(cols) < 3:
+                    continue
+
+                lesson_num = int(cols[0].get_text(strip=True))
+                times = re.findall(r"\d{1,2}:\d{2}", cols[1].get_text())
+                time_start = times[0] if len(times) > 0 else ""
+                time_end = times[1] if len(times) > 1 else ""
+
+                cell = cols[2]
+                if not cell.get_text(strip=True):
+                    continue
+
+                p_names = cell.find_all('span', class_='p_name')
+                for p_name_span in p_names:
+                    subject = p_name_span.get_text(strip=True)
+                    curr = p_name_span
+                    lesson_type = ""
+                    subgroup_info = ""
+                    teacher = ""
+                    room = ""
+
+                    while curr.next_sibling:
+                        curr = curr.next_sibling
+                        if getattr(curr, 'name', None) == 'span':
+                            classes = curr.get('class', [])
+                            if 'p_name' in classes:
+                                break
+                            elif 'p_type_name' in classes:
+                                lesson_type = curr.get_text(strip=True)
+                            elif 'gr2_name' in classes:
+                                subgroup_info = curr.get_text(strip=True)
+                            elif 't_name' in classes:
+                                teacher = curr.get_text(strip=True)
+                            elif 'room_name' in classes:
+                                room = curr.get_text(strip=True)
+
+                    # Визначення заміни
+                    is_replacement = False
+                    replacement_note = None
+                    full_text = f"{subject} {subgroup_info} {teacher}"
+                    if "заміна!" in full_text.lower():
+                        is_replacement = True
+                        rep_match = re.search(r'Увага!\s*Заміна!\s*(.*?)\s+замість:\s*(.*?)(?=\s+[А-ЯІЇЄ]|\s*$)', full_text, re.IGNORECASE)
+                        if rep_match:
+                            replacement_note = f"Заміна: {rep_match.group(1)} замість {rep_match.group(2)}"
+                        else:
+                            replacement_note = "Зафіксовано заміну викладача/пари"
+
+                    # Визначення підгрупи
+                    target_subgroup = 0
+                    if re.search(r'підгр\.?\s*1', subgroup_info, re.IGNORECASE):
+                        target_subgroup = 1
+                    elif re.search(r'підгр\.?\s*2', subgroup_info, re.IGNORECASE):
+                        target_subgroup = 2
+
+                    await db.execute("""
+                        INSERT INTO schedule (
+                            date_str, day_of_week, lesson_number, time_start, time_end,
+                            subject, lesson_type, teacher, room, target_subgroup,
+                            is_replacement, replacement_note
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        date_str, day_of_week, lesson_num, time_start, time_end,
+                        subject, lesson_type, teacher, room, target_subgroup,
+                        is_replacement, replacement_note
+                    ))
+
+        await db.commit()
+    print("Розклад успішно оновлено в базі даних.")

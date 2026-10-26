@@ -7,6 +7,7 @@ let currentUser = null;
 let currentActiveLessonId = null;
 let attendanceState = {};
 
+// Універсальна обгортка для надсилання запитів до FastAPI з валідацією через Telegram initData
 async function apiRequest(endpoint, method = "GET", body = null) {
   const headers = {
     "X-Telegram-Init-Data": (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "",
@@ -24,7 +25,7 @@ async function apiRequest(endpoint, method = "GET", body = null) {
 }
 
 async function init() {
-  // 1. Авторизація користувача
+  // 1. Авторизація та визначення ролі (староста / студент)
   try {
     currentUser = await apiRequest("/api/user_data");
     const isStarosta = currentUser && currentUser.role === "starosta";
@@ -35,6 +36,7 @@ async function init() {
     const sgIndicator = document.getElementById("subgroup-indicator");
     if (sgIndicator) sgIndicator.innerText = `${currentUser.subgroup || 1} підгрупа ⚙️`;
 
+    // Відображення інструментів управління виключно для старости
     if (isStarosta) {
       const dateFilter = document.getElementById("starosta-date-filter");
       if (dateFilter) dateFilter.style.display = "block";
@@ -44,35 +46,39 @@ async function init() {
 
       const navGroupBtn = document.getElementById("nav-group-btn");
       if (navGroupBtn) navGroupBtn.style.display = "block";
+
+      const navGroupStatsBtn = document.getElementById("nav-group-stats-btn");
+      if (navGroupStatsBtn) navGroupStatsBtn.style.display = "block";
+
+      loadGroupManagement().catch(e => console.error("Помилка списку групи:", e));
+      loadGroupStats().catch(e => console.error("Помилка статистики групи:", e));
     }
 
+    // Якщо новий студент ще не ввів реальне ПІБ
     if (!currentUser.full_name || currentUser.full_name.split(" ").length < 2) {
       openProfileModal();
     }
   } catch (err) {
-    console.error("User data error:", err);
+    console.error("Помилка авторизації користувача:", err);
     const badge = document.getElementById("user-role-badge");
     if (badge) badge.innerText = "Студент";
   }
 
-  // 2. Головне — завантаження розкладу (виконується обов'язково)
+  // 2. Головне — завантаження розкладу
   try {
     await loadSchedule();
   } catch (err) {
-    console.error("Schedule error:", err);
+    console.error("Помилка розкладу:", err);
     const sched = document.getElementById("schedule-list");
     if (sched) sched.innerHTML = `<p style="color:red;">Помилка завантаження розкладу: ${err.message}</p>`;
   }
 
-  // 3. Другорядні модулі (працюють автономно)
-  loadAnnouncements().catch(e => console.error(e));
-  loadMyStats().catch(e => console.error(e));
-  if (currentUser && currentUser.role === "starosta") {
-    loadGroupManagement().catch(e => console.error(e));
-  }
+  // 3. Автономне підвантаження оголошень та персональної статистики
+  loadAnnouncements().catch(e => console.error("Помилка новин:", e));
+  loadMyStats().catch(e => console.error("Помилка персональної статистики:", e));
 }
 
-// Завантаження розкладу
+// Завантаження та побудова карток розкладу
 async function loadSchedule() {
   const schedule = await apiRequest("/api/schedule");
   const container = document.getElementById("schedule-list");
@@ -80,7 +86,7 @@ async function loadSchedule() {
   container.innerHTML = "";
 
   if (!schedule || schedule.length === 0) {
-    container.innerHTML = "<p>На цей період занять не знайдено.</p>";
+    container.innerHTML = "<p class='text-muted'>На цей період занять не знайдено.</p>";
     return;
   }
 
@@ -106,7 +112,7 @@ async function loadSchedule() {
       
       let replacementHtml = item.is_replacement 
         ? `<div class="replacement-badge" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; color: #ff6b81; font-weight: 600; font-size: 12px;">
-            🔴 ${item.replacement_note || "Увага! Заміна"}
+            🔴 ${item.replacement_note || "Увага! Заміна викладача"}
            </div>` 
         : "";
       
@@ -132,151 +138,7 @@ async function loadSchedule() {
   }
 }
 
-// Завантаження оголошень
-async function loadAnnouncements() {
-  const container = document.getElementById("announcements-list");
-  if (!container) return;
-
-  try {
-    const list = await apiRequest("/api/announcements");
-    container.innerHTML = "";
-
-    if (!list || list.length === 0) {
-      container.innerHTML = "<p class='text-muted'>Поки немає жодних оголошень.</p>";
-      return;
-    }
-
-    list.forEach(item => {
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 6px;">
-          <h4 style="margin:0; color: #ff6b81;">📢 ${item.title}</h4>
-          <span style="font-size:11px; color:var(--text-muted);">${item.date_time || ''}</span>
-        </div>
-        <p style="margin:0; font-size:14px; line-height:1.4; white-space: pre-wrap;">${item.message}</p>
-      `;
-      container.appendChild(card);
-    });
-  } catch (err) {
-    container.innerHTML = "<p class='text-muted'>Поки немає жодних оголошень.</p>";
-  }
-}
-
-// Персональна статистика
-async function loadMyStats() {
-  try {
-    const data = await apiRequest("/api/my_stats");
-    const gen = data.general || {};
-    const total = gen.total || 0;
-    const present = gen.present_count || 0;
-    const percent = total > 0 ? Math.round((present / total) * 100) : 100;
-
-    const statPercent = document.getElementById("stat-percent");
-    if (statPercent) statPercent.innerText = `${percent}%`;
-
-    const statCounts = document.getElementById("stat-counts");
-    if (statCounts) {
-      statCounts.innerText = `Був: ${present} | Пропусків: ${gen.absent_count || 0} | Запізнень: ${gen.late_count || 0}`;
-    }
-
-    const statFill = document.getElementById("stat-progress-fill");
-    if (statFill) statFill.style.width = `${percent}%`;
-
-    const subContainer = document.getElementById("subject-stats-list");
-    if (subContainer) {
-      subContainer.innerHTML = "";
-      (data.subjects || []).forEach(sub => {
-        const card = document.createElement("div");
-        card.className = "card";
-        card.innerHTML = `
-          <p style="margin:0;"><strong>${sub.subject}</strong></p>
-          <span style="font-size:12px; color:var(--text-muted);">Пропусків: ${sub.subject_absent} з ${sub.total_subject_lessons} пар</span>
-        `;
-        subContainer.appendChild(card);
-      });
-    }
-  } catch (e) {
-    console.error("Stats load error:", e);
-  }
-}
-
-// Керування списком студентів для старости
-async function loadGroupManagement() {
-  try {
-    const students = await apiRequest("/api/group/students");
-    const container = document.getElementById("group-students-list");
-    if (!container) return;
-    container.innerHTML = "";
-
-    students.forEach(s => {
-      const card = document.createElement("div");
-      card.className = "card student-row";
-      card.innerHTML = `
-        <div>
-          <strong>${s.full_name}</strong>
-          <div style="font-size:12px; color:var(--text-muted);">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</div>
-        </div>
-        <div>
-          <select onchange="changeSubgroup(${s.telegram_id}, this.value)" class="status-select">
-            <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
-            <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
-          </select>
-        </div>
-      `;
-      container.appendChild(card);
-    });
-  } catch (e) {
-    console.error("Group management error:", e);
-  }
-}
-
-async function changeSubgroup(tgId, newSg) {
-  await apiRequest("/api/group/change_subgroup", "POST", {
-    student_tg_id: tgId,
-    subgroup: parseInt(newSg)
-  });
-}
-
-function openProfileModal() {
-  const modal = document.getElementById("profile-modal");
-  if (!modal) return;
-  if (currentUser) {
-    const nameInput = document.getElementById("profile-fullname");
-    if (nameInput) nameInput.value = currentUser.full_name || "";
-    const sgSelect = document.getElementById("profile-subgroup");
-    if (sgSelect) sgSelect.value = currentUser.subgroup || 1;
-  }
-  modal.style.display = "block";
-}
-
-function closeProfileModal() {
-  const modal = document.getElementById("profile-modal");
-  if (modal) modal.style.display = "none";
-}
-
-async function saveProfile() {
-  const nameInput = document.getElementById("profile-fullname");
-  const full_name = nameInput ? nameInput.value.trim() : "";
-  const sgSelect = document.getElementById("profile-subgroup");
-  const subgroup = sgSelect ? parseInt(sgSelect.value) : 1;
-
-  if (!full_name || full_name.split(" ").length < 2) {
-    alert("Будь ласка, введіть Прізвище та Ім'я");
-    return;
-  }
-
-  await apiRequest("/api/user/profile", "POST", { full_name, subgroup });
-  if (currentUser) {
-    currentUser.full_name = full_name;
-    currentUser.subgroup = subgroup;
-  }
-  const ind = document.getElementById("subgroup-indicator");
-  if (ind) ind.innerText = `${subgroup} підгрупа ⚙️`;
-  closeProfileModal();
-  await loadSchedule();
-}
-
+// Завантаження журналу відвідуваності на пару (тільки для старости)
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -322,9 +184,13 @@ async function saveAttendance() {
   });
   closeAttendanceModal();
   if (tg && tg.showPopup) {
-    tg.showPopup({ message: "Журнал пари збережено!" });
+    tg.showPopup({ message: "Журнал пари збережено в базу!" });
   } else {
-    alert("Журнал збережено!");
+    alert("Журнал збережено в базу!");
+  }
+  // Оновлюємо зведені дані
+  if (currentUser && currentUser.role === "starosta") {
+    loadGroupStats().catch(e => console.error(e));
   }
 }
 
@@ -333,6 +199,104 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
+// Завантаження загального журналу групи (для старости)
+async function loadGroupStats() {
+  const container = document.getElementById("group-stats-table-container");
+  if (!container) return;
+
+  try {
+    const data = await apiRequest("/api/group/stats");
+    container.innerHTML = "";
+
+    if (!data || data.length === 0) {
+      container.innerHTML = "<p class='text-muted'>Дані ще не накопичено.</p>";
+      return;
+    }
+
+    data.forEach(st => {
+      const card = document.createElement("div");
+      card.className = "card group-student-stat-card";
+      
+      const badgeColor = st.percent >= 80 ? '#2ecc71' : (st.percent >= 50 ? '#f39c12' : '#e74c3c');
+
+      card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong>${st.full_name}</strong>
+            <div style="font-size:12px; color:var(--text-muted);">${st.subgroup} підгрупа</div>
+          </div>
+          <div style="font-weight:bold; font-size:15px; color:${badgeColor}; background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:6px;">
+            ${st.percent}%
+          </div>
+        </div>
+        <div style="font-size:12px; margin-top:8px; display:flex; gap:10px; color:var(--text-muted);">
+          <span>✅ Був: <b>${st.present_count}</b></span>
+          <span>❌ Н: <b>${st.absent_count}</b></span>
+          <span>⏳ Запізн.: <b>${st.late_count}</b></span>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  } catch (err) {
+    container.innerHTML = "<p style='color:red;'>Не вдалося завантажити статистику групи.</p>";
+  }
+}
+
+// Завантаження звіту у форматі CSV/Excel для старости
+async function downloadAttendanceReport() {
+  const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "";
+  try {
+    const res = await fetch("/api/attendance/export", {
+      headers: { "X-Telegram-Init-Data": initData }
+    });
+    if (!res.ok) throw new Error("Помилка формування файлу на сервері");
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Журнал_КІ-25-1_${new Date().toLocaleDateString('uk-UA')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (e) {
+    alert("Не вдалося завантажити файл: " + e.message);
+  }
+}
+
+// Завантаження збережених оголошень із бази
+async function loadAnnouncements() {
+  const container = document.getElementById("announcements-list");
+  if (!container) return;
+
+  try {
+    const list = await apiRequest("/api/announcements");
+    container.innerHTML = "";
+
+    if (!list || list.length === 0) {
+      container.innerHTML = "<p class='text-muted'>Поки немає жодних оголошень.</p>";
+      return;
+    }
+
+    list.forEach(item => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 6px;">
+          <h4 style="margin:0; color: #ff6b81;">📢 ${item.title}</h4>
+          <span style="font-size:11px; color:var(--text-muted);">${item.date_time || ''}</span>
+        </div>
+        <p style="margin:0; font-size:14px; line-height:1.4; white-space: pre-wrap;">${item.message}</p>
+      `;
+      container.appendChild(card);
+    });
+  } catch (err) {
+    container.innerHTML = "<p class='text-muted'>Поки немає жодних оголошень.</p>";
+  }
+}
+
+// Розсилка повідомлень групі від старости
 async function sendBroadcastMessage() {
   const title = document.getElementById("broadcast-title").value.trim();
   const message = document.getElementById("broadcast-body").value.trim();
@@ -340,13 +304,159 @@ async function sendBroadcastMessage() {
     alert("Будь ласка, заповніть тему та текст");
     return;
   }
+
   const res = await apiRequest("/api/broadcast", "POST", { title, message });
-  alert(`Оголошення надіслано ${res.sent_to} студентам!`);
+  alert(`Оголошення надіслано ${res.sent_to} студентам та збережено!`);
+  
   document.getElementById("broadcast-title").value = "";
   document.getElementById("broadcast-body").value = "";
   await loadAnnouncements();
 }
 
+// Персональна статистика студента
+async function loadMyStats() {
+  try {
+    const data = await apiRequest("/api/my_stats");
+    const gen = data.general || {};
+    const total = gen.total || 0;
+    const present = gen.present_count || 0;
+    const absent = gen.absent_count || 0;
+    const late = gen.late_count || 0;
+    const excused = gen.excused_count || 0;
+
+    const percent = total > 0 ? Math.round((present / total) * 100) : 100;
+
+    const statPercent = document.getElementById("stat-percent");
+    if (statPercent) statPercent.innerText = `${percent}%`;
+
+    const statPres = document.getElementById("stat-pres");
+    if (statPres) statPres.innerText = present;
+
+    const statAbs = document.getElementById("stat-abs");
+    if (statAbs) statAbs.innerText = absent;
+
+    const statLate = document.getElementById("stat-late");
+    if (statLate) statLate.innerText = late;
+
+    const statExc = document.getElementById("stat-exc");
+    if (statExc) statExc.innerText = excused;
+
+    const subContainer = document.getElementById("subject-stats-list");
+    if (!subContainer) return;
+    subContainer.innerHTML = "";
+
+    if (!data.subjects || data.subjects.length === 0) {
+      subContainer.innerHTML = "<p class='text-muted'>Історія пар за вашою участю поки порожня.</p>";
+      return;
+    }
+
+    data.subjects.forEach(sub => {
+      const subTotal = sub.total_subject_lessons || 1;
+      const subAbsent = sub.subject_absent || 0;
+      const subPresent = subTotal - subAbsent;
+      const subPercent = Math.round((subPresent / subTotal) * 100);
+      const barColor = subPercent >= 75 ? '#2ecc71' : (subPercent >= 50 ? '#f39c12' : '#e74c3c');
+
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <strong>${sub.subject}</strong>
+          <span style="font-weight:bold; color:${barColor};">${subPercent}%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="fill" style="width: ${subPercent}%; background: ${barColor};"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); margin-top:6px;">
+          <span>Відвідано: ${subPresent} з ${subTotal} пар</span>
+          <span>Пропусків (Н): ${subAbsent}</span>
+        </div>
+      `;
+      subContainer.appendChild(card);
+    });
+  } catch (e) {
+    console.error("Помилка завантаження статистики:", e);
+  }
+}
+
+// Керування підгрупами старостою
+async function loadGroupManagement() {
+  try {
+    const students = await apiRequest("/api/group/students");
+    const container = document.getElementById("group-students-list");
+    if (!container) return;
+    container.innerHTML = "";
+
+    students.forEach(s => {
+      const card = document.createElement("div");
+      card.className = "card student-row";
+      card.innerHTML = `
+        <div>
+          <strong>${s.full_name}</strong>
+          <div style="font-size:12px; color:var(--text-muted);">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</div>
+        </div>
+        <div>
+          <select onchange="changeSubgroup(${s.telegram_id}, this.value)" class="status-select">
+            <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
+            <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
+          </select>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  } catch (e) {
+    console.error("Помилка завантаження студентів:", e);
+  }
+}
+
+async function changeSubgroup(tgId, newSg) {
+  await apiRequest("/api/group/change_subgroup", "POST", {
+    student_tg_id: tgId,
+    subgroup: parseInt(newSg)
+  });
+}
+
+// Модальне вікно профілю
+function openProfileModal() {
+  const modal = document.getElementById("profile-modal");
+  if (!modal) return;
+  if (currentUser) {
+    const nameInput = document.getElementById("profile-fullname");
+    if (nameInput) nameInput.value = currentUser.full_name || "";
+    const sgSelect = document.getElementById("profile-subgroup");
+    if (sgSelect) sgSelect.value = currentUser.subgroup || 1;
+  }
+  modal.style.display = "block";
+}
+
+function closeProfileModal() {
+  const modal = document.getElementById("profile-modal");
+  if (modal) modal.style.display = "none";
+}
+
+async function saveProfile() {
+  const nameInput = document.getElementById("profile-fullname");
+  const full_name = nameInput ? nameInput.value.trim() : "";
+  const sgSelect = document.getElementById("profile-subgroup");
+  const subgroup = sgSelect ? parseInt(sgSelect.value) : 1;
+
+  if (!full_name || full_name.split(" ").length < 2) {
+    alert("Будь ласка, введіть повне Прізвище та Ім'я (наприклад: Шевченко Тарас)");
+    return;
+  }
+
+  await apiRequest("/api/user/profile", "POST", { full_name, subgroup });
+  if (currentUser) {
+    currentUser.full_name = full_name;
+    currentUser.subgroup = subgroup;
+  }
+  const ind = document.getElementById("subgroup-indicator");
+  if (ind) ind.innerText = `${subgroup} підгрупа ⚙️`;
+  closeProfileModal();
+  await loadSchedule();
+}
+
+// Задання довільного діапазону дат розкладу старостою
 async function submitCustomDateRange() {
   const sdate = document.getElementById("filter-sdate").value.trim();
   const edate = document.getElementById("filter-edate").value.trim();
@@ -360,6 +470,7 @@ async function submitCustomDateRange() {
   await loadSchedule();
 }
 
+// Перемикання вкладок нижньої навігації
 function switchTab(tabId, btn) {
   document.querySelectorAll(".tab-pane").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));
@@ -368,13 +479,5 @@ function switchTab(tabId, btn) {
   if (target) target.classList.add("active");
   if (btn) btn.classList.add("active");
 }
-// Додай у функцію init() умову для старости:
-    if (isStarosta) {
-      document.getElementById("starosta-date-filter").style.display = "block";
-      document.getElementById("starosta-broadcast-panel").style.display = "block";
-      document.getElementById("nav-group-btn").style.display = "block";
-      document.getElementById("nav-group-stats-btn").style.display = "block"; // Кнопка «Звіт групи»
-      loadGroupStats().catch(e => console.error(e));
-    }
 
 init();

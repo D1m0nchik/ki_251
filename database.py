@@ -1,57 +1,27 @@
-import aiosqlite
+import os
+import asyncpg
 
-DB_NAME = "schedule.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+pool: asyncpg.Pool = None
 
 async def init_db():
-    async with aiosqlite.connect(DB_NAME) as db:
-        # Таблиця студентів
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                telegram_id INTEGER PRIMARY KEY,
-                full_name TEXT NOT NULL,
-                subgroup INTEGER DEFAULT 1,
-                role TEXT DEFAULT 'student'
-            )
-        """)
-        
-        # Таблиця розкладу
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS schedule (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date_str TEXT NOT NULL,
-                day_of_week TEXT NOT NULL,
-                lesson_number INTEGER NOT NULL,
-                time_start TEXT NOT NULL,
-                time_end TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                lesson_type TEXT,
-                teacher TEXT,
-                room TEXT,
-                target_subgroup INTEGER DEFAULT 0,
-                is_replacement BOOLEAN DEFAULT 0,
-                replacement_note TEXT
-            )
-        """)
+    global pool
+    if not DATABASE_URL:
+        print("ПОМИЛКА: Змінна оточення DATABASE_URL не встановлена на Render!")
+        return
 
-        # Таблиця відвідуваності
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS attendance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                schedule_id INTEGER NOT NULL,
-                telegram_id INTEGER NOT NULL,
-                status TEXT DEFAULT 'present',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(schedule_id, telegram_id)
-            )
-        """)
+    # Ініціалізуємо пул підключень до PostgreSQL у Supabase
+    pool = await asyncpg.create_pool(
+        DATABASE_URL,
+        min_size=1,
+        max_size=10,
+        command_timeout=60
+    )
+    print("Успішно підключено до бази Supabase PostgreSQL!")
 
-        # Таблиця для збереження історії оголошень
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS announcements (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                message TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.commit()
+async def get_db_pool() -> asyncpg.Pool:
+    global pool
+    if pool is None:
+        await init_db()
+    return pool

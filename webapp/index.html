@@ -18,31 +18,66 @@
     </header>
 
     <main class="content">
-      <!-- Вкладка Розклад -->
+      <!-- 1. Вкладка Розклад + Вибір інтервалу дат -->
       <section id="tab-schedule" class="tab-pane active">
+        <!-- Блок зміни дат для старости -->
+        <div id="starosta-date-filter" class="card filter-card" style="display: none;">
+          <h4>Задати період розкладу:</h4>
+          <div class="date-inputs">
+            <input type="text" id="filter-sdate" placeholder="01.11.2026" maxlength="10">
+            <span>—</span>
+            <input type="text" id="filter-edate" placeholder="15.11.2026" maxlength="10">
+            <button class="btn-primary" onclick="submitCustomDateRange()">Оновити</button>
+          </div>
+        </div>
+
         <h3>Мій розклад</h3>
         <div id="schedule-list" class="schedule-container">
-          <p class="loading">Завантаження пар з сайту університету...</p>
+          <p class="loading">Завантаження...</p>
         </div>
       </section>
 
-      <!-- Вкладка Оголошення -->
+      <!-- 2. Вкладка Оголошення (Студенти читають, староста надсилає) -->
       <section id="tab-announcements" class="tab-pane">
-        <h3>Оголошення</h3>
+        <div id="starosta-broadcast-panel" class="card" style="display: none;">
+          <h4>Надіслати важливе оголошення всій групі</h4>
+          <input type="text" id="broadcast-title" placeholder="Тема (наприклад: Перенос пари)" class="form-input">
+          <textarea id="broadcast-body" placeholder="Текст повідомлення..." rows="3" class="form-input"></textarea>
+          <button class="btn-primary" onclick="sendBroadcastMessage()">Розіслати в Telegram 📢</button>
+        </div>
+
+        <h3>Останні новини</h3>
         <div class="card">
-          <h4>Модульний контроль</h4>
-          <p>Не забудьте закрити лабораторні роботи з ООП до п'ятниці.</p>
+          <h4>Увага щодо модульного контролю</h4>
+          <p>Всі лабораторні роботи мають бути захищені за 2 тижні до сесії.</p>
         </div>
       </section>
 
-      <!-- Вкладка Статистика -->
+      <!-- 3. Вкладка Статистика (Персональна для кожного студента) -->
       <section id="tab-stats" class="tab-pane">
-        <h3>Відвідуваність</h3>
-        <div class="card">
-          <p>Присутність у поточному семестрі: <strong>100%</strong></p>
+        <h3>Моя статистика відвідуваності</h3>
+        <div class="card stat-summary-card">
+          <h2 id="stat-percent">0%</h2>
+          <p id="stat-counts">Був: 0 | Пропусків: 0 | Запізнень: 0</p>
+          <div class="progress-bar"><div id="stat-progress-fill" class="fill" style="width: 0%;"></div></div>
         </div>
+        <h4>По дисциплінах</h4>
+        <div id="subject-stats-list"></div>
       </section>
     </main>
+
+    <!-- Модальне вікно старости: Відмітка відвідуваності на пару -->
+    <div id="attendance-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="modal-lesson-title">Відмітка на парі</h3>
+          <span class="close-btn" onclick="closeAttendanceModal()">&times;</span>
+        </div>
+        <p id="modal-lesson-info" class="text-muted"></p>
+        <div id="modal-students-list" class="students-list"></div>
+        <button class="btn-primary" style="width: 100%; margin-top: 15px;" onclick="saveAttendance()">Зберегти журнал</button>
+      </div>
+    </div>
 
     <nav class="bottom-nav">
       <button class="nav-item active" onclick="switchTab('tab-schedule', this)">Розклад</button>

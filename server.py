@@ -286,3 +286,101 @@ WEBAPP_DIR = BASE_DIR / "webapp"
 
 if WEBAPP_DIR.exists():
     app.mount("/app", StaticFiles(directory=str(WEBAPP_DIR), html=True), name="webapp")
+import csv
+import io
+from fastapi import Response
+
+# 1. Загальна зведена статистика для старости по кожному студенту
+@app.get("/api/group/stats")
+async def get_group_stats(x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        # Агрегуємо відвідуваність кожного студента
+        query = """
+            SELECT 
+                u.telegram_id,
+                u.full_name,
+                u.subgroup,
+                COUNT(a.id) as total_checked,
+                SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END) as present_count,
+                SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+                SUM(CASE WHEN a.status = 'late' THEN 1 ELSE 0 END) as late_count,
+                SUM(CASE WHEN a.status = 'excused' THEN 1 ELSE 0 END) as excused_count
+            FROM users u
+            LEFT JOIN attendance a ON a.telegram_id = u.telegram_id
+            GROUP BY u.telegram_id, u.full_name, u.subgroup
+            ORDER BY u.full_name ASC
+        """
+        rows = await conn.fetch(query)
+        result = []
+        for r in rows:
+            d = dict(r)
+            total = d["total_checked"] or 0
+            present = d["present_count"] or 0
+            d["percent"] = round((present / total * 100)) if total > 0 else 100
+            result.append(d)
+        return result
+
+# 2. Генерація та вивантаження файлу звіту (.csv з підтримкою Excel UTF-8-BOM)
+@app.get("/api/attendance/export")
+async def export_attendance_file(x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        query = """
+            SELECT 
+                s.date_str,
+                s.day_of_week,
+                s.lesson_number,
+                s.subject,
+                u.full_name,
+                u.subgroup,
+                CASE 
+                    WHEN a.status = 'present' THEN 'Присутній'
+                    WHEN a.status = 'absent' THEN 'Пропуск (Н)'
+                    WHEN a.status = 'late' THEN 'Запізнився'
+                    WHEN a.status = 'excused' THEN 'Поважна причина'
+                    ELSE 'Не відмічено'
+                END as status_text
+            FROM attendance a
+            JOIN schedule s ON s.id = a.schedule_id
+            JOIN users u ON u.telegram_id = a.telegram_id
+            ORDER BY s.id ASC, u.full_name ASC
+        """
+        records = await conn.fetch(query)
+
+    # Формуємо CSV буфер
+    output = io.StringIO()
+    # UTF-8 BOM для коректного відображення українських літер в Excel
+    output.write('\ufeff')
+    writer = csv.writer(output, delimiter=';')
+    writer.writerow(["Дата", "День", "Пара", "Дисципліна", "ПІБ Студента", "Підгрупа", "Статус"])
+
+    for r in records:
+        writer.writerow([
+            r["date_str"],
+            r["day_of_week"],
+            r["lesson_number"],
+            r["subject"],
+            r["full_name"],
+            f"{r['subgroup']} підгрупа",
+            r["status_text"]
+        ])
+
+    csv_data = output.getvalue().encode('utf-8-sig')
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=attendance_report_KI251.csv"
+        }
+    )

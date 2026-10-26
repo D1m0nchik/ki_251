@@ -10,7 +10,7 @@ async def init_db():
                 telegram_id INTEGER PRIMARY KEY,
                 full_name TEXT NOT NULL,
                 subgroup INTEGER DEFAULT 1,
-                role TEXT DEFAULT 'student'  -- 'starosta' або 'student'
+                role TEXT DEFAULT 'student'
             )
         """)
         
@@ -33,8 +33,7 @@ async def init_db():
             )
         """)
 
-        # Журнал присутності на парах
-        # status: 'present' (був), 'absent' (пропуск), 'late' (запізнився), 'excused' (поважна причина)
+        # Таблиця відвідуваності
         await db.execute("""
             CREATE TABLE IF NOT EXISTS attendance (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,6 +42,16 @@ async def init_db():
                 status TEXT DEFAULT 'present',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(schedule_id, telegram_id)
+            )
+        """)
+
+        # Таблиця для збереження історії оголошень
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS announcements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         await db.commit()

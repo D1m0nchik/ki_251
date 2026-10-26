@@ -368,5 +368,13 @@ function switchTab(tabId, btn) {
   if (target) target.classList.add("active");
   if (btn) btn.classList.add("active");
 }
+// Додай у функцію init() умову для старости:
+    if (isStarosta) {
+      document.getElementById("starosta-date-filter").style.display = "block";
+      document.getElementById("starosta-broadcast-panel").style.display = "block";
+      document.getElementById("nav-group-btn").style.display = "block";
+      document.getElementById("nav-group-stats-btn").style.display = "block"; // Кнопка «Звіт групи»
+      loadGroupStats().catch(e => console.error(e));
+    }
 
 init();

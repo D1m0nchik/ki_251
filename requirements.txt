@@ -1,0 +1,8 @@
+aiogram>=3.0.0
+fastapi
+uvicorn[standard]
+aiosqlite
+requests
+beautifulsoup4
+pydantic
+python-dotenv

@@ -5,25 +5,25 @@ from bs4 import BeautifulSoup
 from database import DB_NAME
 
 URL = "https://dekanat.nung.edu.ua/cgi-bin/timetable.cgi?n=700"
-RAW_PAYLOAD = "faculty=1015&teacher=&course=0&group=%CA%B2-25-1&sdate=&edate=&n=700"
-
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Content-Type": "application/x-www-form-urlencoded",
     "Referer": "https://dekanat.nung.edu.ua/cgi-bin/timetable.cgi?n=700"
 }
 
-def fetch_raw_schedule() -> str:
-    response = requests.post(URL, data=RAW_PAYLOAD.encode('ascii'), headers=HEADERS)
-    return response.content.decode('cp1251', errors='replace')
-
-async def update_schedule_in_db():
-    html_text = fetch_raw_schedule()
+async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
+    """
+    Завантажує та оновлює розклад за вказані дати (наприклад: sdate='01.11.2026', edate='15.11.2026')
+    """
+    payload = f"faculty=1015&teacher=&course=0&group=%CA%B2-25-1&sdate={sdate}&edate={edate}&n=700"
+    response = requests.post(URL, data=payload.encode('ascii'), headers=HEADERS)
+    html_text = response.content.decode('cp1251', errors='replace')
+    
     soup = BeautifulSoup(html_text, 'html.parser')
     day_blocks = soup.select('.container .row > div.col-12.col-sm-6')
 
     async with aiosqlite.connect(DB_NAME) as db:
-        # Очищаємо попередній розклад перед оновленням
+        # Якщо вказано діапазон, очищаємо записи за цей діапазон або перезаписуємо
         await db.execute("DELETE FROM schedule")
 
         for day_block in day_blocks:
@@ -73,19 +73,14 @@ async def update_schedule_in_db():
                             elif 'room_name' in classes:
                                 room = curr.get_text(strip=True)
 
-                    # Визначення заміни
                     is_replacement = False
                     replacement_note = None
                     full_text = f"{subject} {subgroup_info} {teacher}"
                     if "заміна!" in full_text.lower():
                         is_replacement = True
                         rep_match = re.search(r'Увага!\s*Заміна!\s*(.*?)\s+замість:\s*(.*?)(?=\s+[А-ЯІЇЄ]|\s*$)', full_text, re.IGNORECASE)
-                        if rep_match:
-                            replacement_note = f"Заміна: {rep_match.group(1)} замість {rep_match.group(2)}"
-                        else:
-                            replacement_note = "Зафіксовано заміну викладача/пари"
+                        replacement_note = f"Заміна: {rep_match.group(1)} замість {rep_match.group(2)}" if rep_match else "Зафіксовано заміну"
 
-                    # Визначення підгрупи
                     target_subgroup = 0
                     if re.search(r'підгр\.?\s*1', subgroup_info, re.IGNORECASE):
                         target_subgroup = 1
@@ -103,6 +98,4 @@ async def update_schedule_in_db():
                         subject, lesson_type, teacher, room, target_subgroup,
                         is_replacement, replacement_note
                     ))
-
         await db.commit()
-    print("Розклад успішно оновлено в базі даних.")

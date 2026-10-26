@@ -3,7 +3,7 @@ tg.expand();
 
 let currentUser = null;
 let currentActiveLessonId = null;
-let attendanceState = {}; // { telegram_id: status }
+let attendanceState = {};
 
 async function apiRequest(endpoint, method = "GET", body = null) {
   const headers = {
@@ -27,20 +27,88 @@ async function init() {
     const isStarosta = currentUser.role === "starosta";
 
     document.getElementById("user-role-badge").innerText = isStarosta ? "Староста" : "Студент";
-    document.getElementById("subgroup-indicator").innerText = `${currentUser.subgroup} підгрупа`;
+    document.getElementById("subgroup-indicator").innerText = `${currentUser.subgroup} підгрупа ⚙️`;
 
-    // Показуємо адмін-панелі тільки старості
     if (isStarosta) {
       document.getElementById("starosta-date-filter").style.display = "block";
       document.getElementById("starosta-broadcast-panel").style.display = "block";
+      document.getElementById("nav-group-btn").style.display = "block"; // Кнопка «Група» в меню
+    }
+
+    // Якщо це новий студент (ім'я містить лише одне слово або нік), пропонуємо заповнити профіль
+    if (!currentUser.full_name || currentUser.full_name.split(" ").length < 2) {
+      openProfileModal();
     }
 
     await loadSchedule();
     await loadMyStats();
+    if (isStarosta) await loadGroupManagement();
   } catch (err) {
     console.error(err);
     document.getElementById("schedule-list").innerHTML = `<p style="color:red;">${err.message}</p>`;
   }
+}
+
+// Налаштування профілю (ПІБ та підгрупа)
+function openProfileModal() {
+  if (currentUser) {
+    document.getElementById("profile-fullname").value = currentUser.full_name || "";
+    document.getElementById("profile-subgroup").value = currentUser.subgroup || 1;
+  }
+  document.getElementById("profile-modal").style.display = "block";
+}
+
+function closeProfileModal() {
+  document.getElementById("profile-modal").style.display = "none";
+}
+
+async function saveProfile() {
+  const full_name = document.getElementById("profile-fullname").value.trim();
+  const subgroup = parseInt(document.getElementById("profile-subgroup").value);
+
+  if (!full_name || full_name.split(" ").length < 2) {
+    alert("Будь ласка, введіть повне Прізвище та Ім'я (наприклад: Шевченко Тарас)");
+    return;
+  }
+
+  await apiRequest("/api/user/profile", "POST", { full_name, subgroup });
+  currentUser.full_name = full_name;
+  currentUser.subgroup = subgroup;
+  document.getElementById("subgroup-indicator").innerText = `${subgroup} підгрупа ⚙️`;
+  closeProfileModal();
+  await loadSchedule();
+}
+
+// Керування підгрупами старостою
+async function loadGroupManagement() {
+  const students = await apiRequest("/api/group/students");
+  const container = document.getElementById("group-students-list");
+  container.innerHTML = "";
+
+  students.forEach(s => {
+    const card = document.createElement("div");
+    card.className = "card student-row";
+    card.innerHTML = `
+      <div>
+        <strong>${s.full_name}</strong>
+        <div style="font-size:12px; color:var(--text-muted);">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</div>
+      </div>
+      <div>
+        <select onchange="changeSubgroup(${s.telegram_id}, this.value)" class="status-select">
+          <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
+          <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
+        </select>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+async function changeSubgroup(tgId, newSg) {
+  await apiRequest("/api/group/change_subgroup", "POST", {
+    student_tg_id: tgId,
+    subgroup: parseInt(newSg)
+  });
 }
 
 // Завантаження розкладу
@@ -76,11 +144,10 @@ async function loadSchedule() {
       
       let replacementHtml = item.is_replacement 
         ? `<div class="replacement-badge" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; color: #ff6b81; font-weight: 600; font-size: 12px;">
-            🔴 ${item.replacement_note || "Увага! Заміна викладача"}
+            🔴 ${item.replacement_note || "Увага! Заміна"}
            </div>` 
         : "";
       
-      // Кнопка журналу присутня ТІЛЬКИ у старости
       let starostaBtn = currentUser.role === "starosta" 
         ? `<button class="btn-journal" onclick="openAttendanceModal(${item.id}, '${item.subject}')">📝 Журнал пари</button>`
         : "";
@@ -103,7 +170,7 @@ async function loadSchedule() {
   }
 }
 
-// Відкриття журналу відвідуваності на конкретну пару
+// Журнал відвідуваності
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -150,10 +217,10 @@ function closeAttendanceModal() {
   document.getElementById("attendance-modal").style.display = "none";
 }
 
-// Персональна статистика
+// Статистика
 async function loadMyStats() {
   const data = await apiRequest("/api/my_stats");
-  const gen = data.general;
+  const gen = data.general || {};
   const total = gen.total || 0;
   const present = gen.present_count || 0;
   const percent = total > 0 ? Math.round((present / total) * 100) : 100;
@@ -165,7 +232,7 @@ async function loadMyStats() {
 
   const subContainer = document.getElementById("subject-stats-list");
   subContainer.innerHTML = "";
-  data.subjects.forEach(sub => {
+  (data.subjects || []).forEach(sub => {
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
@@ -176,7 +243,7 @@ async function loadMyStats() {
   });
 }
 
-// Розсилка повідомлення старостою
+// Оголошення
 async function sendBroadcastMessage() {
   const title = document.getElementById("broadcast-title").value.trim();
   const message = document.getElementById("broadcast-body").value.trim();
@@ -184,14 +251,13 @@ async function sendBroadcastMessage() {
     alert("Будь ласка, заповніть тему та текст");
     return;
   }
-
   const res = await apiRequest("/api/broadcast", "POST", { title, message });
   alert(`Оголошення надіслано ${res.sent_to} студентам!`);
   document.getElementById("broadcast-title").value = "";
   document.getElementById("broadcast-body").value = "";
 }
 
-// Зміна інтервалу дат старостою
+// Оновлення дат
 async function submitCustomDateRange() {
   const sdate = document.getElementById("filter-sdate").value.trim();
   const edate = document.getElementById("filter-edate").value.trim();

@@ -1,13 +1,17 @@
 const tg = window.Telegram.WebApp;
 try {
   tg.expand();
+  // Вимикаємо жест закриття свайпом, який блокував натискання кнопок
+  if (tg.disableVerticalSwipes) {
+    tg.disableVerticalSwipes();
+  }
 } catch (e) {}
 
 let currentUser = null;
 let currentActiveLessonId = null;
 let attendanceState = {};
+let allScheduleData = []; // Зберігаємо всі завантажені пари для локальної фільтрації
 
-// Універсальна обгортка для надсилання запитів до FastAPI з валідацією через Telegram initData
 async function apiRequest(endpoint, method = "GET", body = null) {
   const headers = {
     "X-Telegram-Init-Data": (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "",
@@ -25,7 +29,6 @@ async function apiRequest(endpoint, method = "GET", body = null) {
 }
 
 async function init() {
-  // 1. Авторизація та визначення ролі (староста / студент)
   try {
     currentUser = await apiRequest("/api/user_data");
     const isStarosta = currentUser && currentUser.role === "starosta";
@@ -36,7 +39,6 @@ async function init() {
     const sgIndicator = document.getElementById("subgroup-indicator");
     if (sgIndicator) sgIndicator.innerText = `${currentUser.subgroup || 1} підгрупа ⚙️`;
 
-    // Відображення інструментів управління виключно для старости
     if (isStarosta) {
       const dateFilter = document.getElementById("starosta-date-filter");
       if (dateFilter) dateFilter.style.display = "block";
@@ -50,48 +52,73 @@ async function init() {
       const navGroupStatsBtn = document.getElementById("nav-group-stats-btn");
       if (navGroupStatsBtn) navGroupStatsBtn.style.display = "block";
 
-      loadGroupManagement().catch(e => console.error("Помилка списку групи:", e));
-      loadGroupStats().catch(e => console.error("Помилка статистики групи:", e));
+      loadGroupManagement().catch(e => console.error(e));
+      loadGroupStats().catch(e => console.error(e));
     }
 
-    // Якщо новий студент ще не ввів реальне ПІБ
     if (!currentUser.full_name || currentUser.full_name.split(" ").length < 2) {
       openProfileModal();
     }
   } catch (err) {
-    console.error("Помилка авторизації користувача:", err);
-    const badge = document.getElementById("user-role-badge");
-    if (badge) badge.innerText = "Студент";
+    console.error("Init error:", err);
   }
 
-  // 2. Головне — завантаження розкладу
-  try {
-    await loadSchedule();
-  } catch (err) {
-    console.error("Помилка розкладу:", err);
-    const sched = document.getElementById("schedule-list");
-    if (sched) sched.innerHTML = `<p style="color:red;">Помилка завантаження розкладу: ${err.message}</p>`;
-  }
+  // Первинне завантаження
+  await refreshAllData();
 
-  // 3. Автономне підвантаження оголошень та персональної статистики
-  loadAnnouncements().catch(e => console.error("Помилка новин:", e));
-  loadMyStats().catch(e => console.error("Помилка персональної статистики:", e));
+  // Фонове автооновлення в реальному часі кожні 20 секунд (тихе, без смикання екрана)
+  setInterval(() => {
+    refreshAllData(true);
+  }, 20000);
+
+  // Оновлення, коли користувач повертається у вікно додатку
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      refreshAllData(true);
+    }
+  });
 }
 
-// Завантаження та побудова карток розкладу
-async function loadSchedule() {
-  const schedule = await apiRequest("/api/schedule");
+// Загальна функція синхронізації даних
+async function refreshAllData(isBackground = false) {
+  try {
+    await loadSchedule(isBackground);
+    loadAnnouncements().catch(e => console.error(e));
+    loadMyStats().catch(e => console.error(e));
+    if (currentUser && currentUser.role === "starosta") {
+      loadGroupStats().catch(e => console.error(e));
+    }
+  } catch (e) {
+    console.error("Помилка фонового оновлення:", e);
+  }
+}
+
+// Завантаження розкладу
+async function loadSchedule(isBackground = false) {
+  const container = document.getElementById("schedule-list");
+  if (!container) return;
+
+  if (!isBackground && allScheduleData.length === 0) {
+    container.innerHTML = "<p class='loading'>Завантаження розкладу...</p>";
+  }
+
+  allScheduleData = await apiRequest("/api/schedule");
+  renderSchedule(allScheduleData);
+}
+
+// Рендеринг карток розкладу з можливістю локальної фільтрації за датами
+function renderSchedule(lessonsList) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
   container.innerHTML = "";
 
-  if (!schedule || schedule.length === 0) {
-    container.innerHTML = "<p class='text-muted'>На цей період занять не знайдено.</p>";
+  if (!lessonsList || lessonsList.length === 0) {
+    container.innerHTML = "<p class='text-muted'>Занять на цей період не знайдено.</p>";
     return;
   }
 
   const groupedByDay = {};
-  schedule.forEach(item => {
+  lessonsList.forEach(item => {
     const dayKey = `${item.date_str} ${item.day_of_week}`;
     if (!groupedByDay[dayKey]) groupedByDay[dayKey] = [];
     groupedByDay[dayKey].push(item);
@@ -138,7 +165,39 @@ async function loadSchedule() {
   }
 }
 
-// Завантаження журналу відвідуваності на пару (тільки для старости)
+// Локальна фільтрація діапазону (тільки на екрані користувача, не зачіпає інших!)
+function applyLocalDateFilter() {
+  const sdate = document.getElementById("filter-sdate").value.trim();
+  const edate = document.getElementById("filter-edate").value.trim();
+
+  if (!sdate && !edate) {
+    renderSchedule(allScheduleData);
+    return;
+  }
+
+  // Парсинг дат формату дд.мм.рррр для порівняння
+  function parseDate(str) {
+    if (!str) return null;
+    const parts = str.split(".");
+    if (parts.length < 3) return null;
+    return new Date(parts[2], parts[1] - 1, parts[0]);
+  }
+
+  const startDate = parseDate(sdate);
+  const endDate = parseDate(edate);
+
+  const filtered = allScheduleData.filter(item => {
+    const itemDate = parseDate(item.date_str);
+    if (!itemDate) return true;
+    if (startDate && itemDate < startDate) return false;
+    if (endDate && itemDate > endDate) return false;
+    return true;
+  });
+
+  renderSchedule(filtered);
+}
+
+// Завантаження журналу відвідуваності на пару
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -146,6 +205,7 @@ async function openAttendanceModal(scheduleId, subjectName) {
   if (title) title.innerText = `Журнал: ${subjectName}`;
   const list = document.getElementById("modal-students-list");
   if (list) list.innerHTML = "<p>Завантаження студентів...</p>";
+  
   const modal = document.getElementById("attendance-modal");
   if (modal) modal.style.display = "block";
 
@@ -184,11 +244,10 @@ async function saveAttendance() {
   });
   closeAttendanceModal();
   if (tg && tg.showPopup) {
-    tg.showPopup({ message: "Журнал пари збережено в базу!" });
+    tg.showPopup({ message: "Журнал пари збережено!" });
   } else {
-    alert("Журнал збережено в базу!");
+    alert("Журнал збережено!");
   }
-  // Оновлюємо зведені дані
   if (currentUser && currentUser.role === "starosta") {
     loadGroupStats().catch(e => console.error(e));
   }
@@ -199,7 +258,7 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
-// Завантаження загального журналу групи (для старости)
+// Завантаження загального журналу групи
 async function loadGroupStats() {
   const container = document.getElementById("group-stats-table-container");
   if (!container) return;
@@ -216,7 +275,6 @@ async function loadGroupStats() {
     data.forEach(st => {
       const card = document.createElement("div");
       card.className = "card group-student-stat-card";
-      
       const badgeColor = st.percent >= 80 ? '#2ecc71' : (st.percent >= 50 ? '#f39c12' : '#e74c3c');
 
       card.innerHTML = `
@@ -242,14 +300,14 @@ async function loadGroupStats() {
   }
 }
 
-// Завантаження звіту у форматі CSV/Excel для старости
+// Завантаження звіту CSV
 async function downloadAttendanceReport() {
   const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "";
   try {
     const res = await fetch("/api/attendance/export", {
       headers: { "X-Telegram-Init-Data": initData }
     });
-    if (!res.ok) throw new Error("Помилка формування файлу на сервері");
+    if (!res.ok) throw new Error("Помилка формування файлу");
 
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
@@ -265,7 +323,7 @@ async function downloadAttendanceReport() {
   }
 }
 
-// Завантаження збережених оголошень із бази
+// Завантаження оголошень
 async function loadAnnouncements() {
   const container = document.getElementById("announcements-list");
   if (!container) return;
@@ -296,7 +354,7 @@ async function loadAnnouncements() {
   }
 }
 
-// Розсилка повідомлень групі від старости
+// Розсилка повідомлень
 async function sendBroadcastMessage() {
   const title = document.getElementById("broadcast-title").value.trim();
   const message = document.getElementById("broadcast-body").value.trim();
@@ -313,7 +371,7 @@ async function sendBroadcastMessage() {
   await loadAnnouncements();
 }
 
-// Персональна статистика студента
+// Персональна статистика
 async function loadMyStats() {
   try {
     const data = await apiRequest("/api/my_stats");
@@ -379,7 +437,7 @@ async function loadMyStats() {
   }
 }
 
-// Керування підгрупами старостою
+// Управління групою
 async function loadGroupManagement() {
   try {
     const students = await apiRequest("/api/group/students");
@@ -416,7 +474,6 @@ async function changeSubgroup(tgId, newSg) {
   });
 }
 
-// Модальне вікно профілю
 function openProfileModal() {
   const modal = document.getElementById("profile-modal");
   if (!modal) return;
@@ -456,21 +513,6 @@ async function saveProfile() {
   await loadSchedule();
 }
 
-// Задання довільного діапазону дат розкладу старостою
-async function submitCustomDateRange() {
-  const sdate = document.getElementById("filter-sdate").value.trim();
-  const edate = document.getElementById("filter-edate").value.trim();
-  if (!sdate || !edate) {
-    alert("Введіть обидві дати");
-    return;
-  }
-  const sched = document.getElementById("schedule-list");
-  if (sched) sched.innerHTML = "<p>Оновлення розкладу з сервера університету...</p>";
-  await apiRequest("/api/schedule/update_range", "POST", { sdate, edate });
-  await loadSchedule();
-}
-
-// Перемикання вкладок нижньої навігації
 function switchTab(tabId, btn) {
   document.querySelectorAll(".tab-pane").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));

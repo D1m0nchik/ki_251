@@ -46,19 +46,47 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                 time_end = times[1] if len(times) > 1 else ""
 
                 cell = cols[2]
-                if not cell.get_text(strip=True):
+                cell_raw_text = cell.get_text(" ", strip=True)
+                if not cell_raw_text:
                     continue
 
+                # 1. Перевірка на заміну у ВСІЙ комірці
+                is_replacement = False
+                replacement_note = None
+                if "заміна!" in cell_raw_text.lower():
+                    is_replacement = True
+                    rep_match = re.search(
+                        r'Увага!\s*Заміна!\s*(.*?)\s+замість:\s*(.*?)(?=\s+[А-ЯІЇЄ]|\s*Вища|\s*Об`|\s*Системне|\s*$)', 
+                        cell_raw_text, 
+                        re.IGNORECASE
+                    )
+                    if rep_match:
+                        replacement_note = f"Заміна: {rep_match.group(1).strip()} замість {rep_match.group(2).strip()}"
+                    else:
+                        replacement_note = "Увага! Зафіксовано заміну!"
+
+                # 2. Витягуємо предмети
                 p_names = cell.find_all('span', class_='p_name')
+                
+                # Якщо тегів p_name немає, але є текст із заміною
+                if not p_names:
+                    p_names = [cell]
+
                 for p_name_span in p_names:
-                    subject = p_name_span.get_text(strip=True)
+                    subject = p_name_span.get_text(strip=True) if hasattr(p_name_span, 'get_text') else str(p_name_span)
+                    
+                    # Очищаємо назву предмета від фрази про заміну, якщо вона туди підтягнулася
+                    subject = re.sub(r'Увага!\s*Заміна!.*?(замість:.*?)?(?=[А-ЯІЇЄ]|$)', '', subject, flags=re.IGNORECASE).strip()
+                    if not subject:
+                        subject = "Дисципліна за розкладом"
+
                     curr = p_name_span
                     lesson_type = ""
                     subgroup_info = ""
                     teacher = ""
                     room = ""
 
-                    while curr.next_sibling:
+                    while curr and hasattr(curr, 'next_sibling') and curr.next_sibling:
                         curr = curr.next_sibling
                         if getattr(curr, 'name', None) == 'span':
                             classes = curr.get('class', [])
@@ -73,18 +101,16 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                             elif 'room_name' in classes:
                                 room = curr.get_text(strip=True)
 
-                    is_replacement = False
-                    replacement_note = None
-                    full_text = f"{subject} {subgroup_info} {teacher}"
-                    if "заміна!" in full_text.lower():
-                        is_replacement = True
-                        rep_match = re.search(r'Увага!\s*Заміна!\s*(.*?)\s+замість:\s*(.*?)(?=\s+[А-ЯІЇЄ]|\s*$)', full_text, re.IGNORECASE)
-                        replacement_note = f"Заміна: {rep_match.group(1)} замість {rep_match.group(2)}" if rep_match else "Зафіксовано заміну"
+                    # Якщо була заміна викладача і в t_name порожньо — ставимо того, хто заміняє
+                    if is_replacement and rep_match and not teacher:
+                        teacher = rep_match.group(1).strip()
 
+                    # Визначення підгрупи
                     target_subgroup = 0
-                    if re.search(r'підгр\.?\s*1', subgroup_info, re.IGNORECASE):
+                    full_check = f"{subgroup_info} {cell_raw_text}"
+                    if re.search(r'\(?підгр\.?\s*1\)?', full_check, re.IGNORECASE):
                         target_subgroup = 1
-                    elif re.search(r'підгр\.?\s*2', subgroup_info, re.IGNORECASE):
+                    elif re.search(r'\(?підгр\.?\s*2\)?', full_check, re.IGNORECASE):
                         target_subgroup = 2
 
                     await db.execute("""

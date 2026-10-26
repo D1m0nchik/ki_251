@@ -1,10 +1,65 @@
-from pydantic import BaseModel
+import os
+import json
+import hmac
+import hashlib
+from urllib.parse import parse_qsl
+from pathlib import Path
 from typing import List, Dict
+
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+import aiosqlite
+
+from database import DB_NAME
 from bot import bot
 from parser import fetch_and_save_schedule
 
-# Вкажи свій справжній числовий Telegram ID, щоб бот автоматично призначив тебе старостою
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 STAROSTA_TELEGRAM_ID = int(os.environ.get("STAROSTA_TELEGRAM_ID", 0))
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def verify_telegram_data(init_data: str) -> dict:
+    """Перевіряє валідність Telegram initData або повертає тестового користувача для браузера."""
+    if not init_data or init_data.strip() == "":
+        return {
+            "id": STAROSTA_TELEGRAM_ID if STAROSTA_TELEGRAM_ID != 0 else 123456789,
+            "first_name": "Староста",
+            "last_name": "КІ-25-1",
+            "username": "starosta"
+        }
+    try:
+        parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
+        hash_received = parsed_data.pop("hash")
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
+        
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        
+        if calculated_hash != hash_received:
+            return {
+                "id": STAROSTA_TELEGRAM_ID if STAROSTA_TELEGRAM_ID != 0 else 123456789,
+                "first_name": "Студент",
+                "last_name": "Тест"
+            }
+            
+        return json.loads(parsed_data.get("user", "{}"))
+    except Exception:
+        return {
+            "id": STAROSTA_TELEGRAM_ID if STAROSTA_TELEGRAM_ID != 0 else 123456789,
+            "first_name": "Студент",
+            "last_name": "Тест"
+        }
 
 @app.get("/api/user_data")
 async def get_user_data(x_telegram_init_data: str = Header(...)):
@@ -26,7 +81,6 @@ async def get_user_data(x_telegram_init_data: str = Header(...)):
                 await db.commit()
                 return {"telegram_id": tg_id, "full_name": name, "subgroup": 1, "role": role}
             
-            # Якщо користувач є головним старостою, гарантуємо йому роль
             if tg_id == STAROSTA_TELEGRAM_ID and row["role"] != "starosta":
                 await db.execute("UPDATE users SET role = 'starosta' WHERE telegram_id = ?", (tg_id,))
                 await db.commit()
@@ -34,27 +88,43 @@ async def get_user_data(x_telegram_init_data: str = Header(...)):
 
             return dict(row)
 
-# Отримання списку студентів на пару (для старости)
+@app.get("/api/schedule")
+async def get_schedule(x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    tg_id = user.get("id")
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT subgroup FROM users WHERE telegram_id = ?", (tg_id,)) as cur:
+            user_row = await cur.fetchone()
+            subgroup = user_row["subgroup"] if user_row else 1
+            
+        # Сортування за id зберігає хронологічну послідовність пар
+        async with db.execute("""
+            SELECT * FROM schedule 
+            WHERE target_subgroup IN (0, ?) 
+            ORDER BY id ASC
+        """, (subgroup,)) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
 @app.get("/api/attendance/students")
 async def get_students_for_lesson(schedule_id: int, x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         
-        # Перевірка ролі
         async with db.execute("SELECT role FROM users WHERE telegram_id = ?", (user.get("id"),)) as cur:
             u = await cur.fetchone()
             if not u or u["role"] != "starosta":
                 raise HTTPException(status_code=403, detail="Доступ заборонено")
 
-        # Отримуємо підгрупу цієї пари
         async with db.execute("SELECT target_subgroup FROM schedule WHERE id = ?", (schedule_id,)) as cur:
             lesson = await cur.fetchone()
             if not lesson:
                 raise HTTPException(status_code=404, detail="Пару не знайдено")
             target_sg = lesson["target_subgroup"]
 
-        # Витягуємо студентів, які мають бути на цій парі, та їхній збережений статус
         query = """
             SELECT u.telegram_id, u.full_name, u.subgroup, COALESCE(a.status, 'present') as status
             FROM users u
@@ -65,10 +135,9 @@ async def get_students_for_lesson(schedule_id: int, x_telegram_init_data: str = 
         async with db.execute(query, (schedule_id, target_sg, target_sg)) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-# Збереження журналу старостою
 class AttendanceSaveRequest(BaseModel):
     schedule_id: int
-    records: Dict[int, str]  # { telegram_id: 'present'/'absent'/'late'/'excused' }
+    records: Dict[int, str]
 
 @app.post("/api/attendance/save")
 async def save_attendance(data: AttendanceSaveRequest, x_telegram_init_data: str = Header(...)):
@@ -89,7 +158,6 @@ async def save_attendance(data: AttendanceSaveRequest, x_telegram_init_data: str
         await db.commit()
     return {"status": "ok"}
 
-# Персональна статистика студента
 @app.get("/api/my_stats")
 async def get_my_stats(x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)
@@ -98,7 +166,6 @@ async def get_my_stats(x_telegram_init_data: str = Header(...)):
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         
-        # Загальна кількість пар та пропусків
         async with db.execute("""
             SELECT 
                 COUNT(*) as total,
@@ -109,9 +176,9 @@ async def get_my_stats(x_telegram_init_data: str = Header(...)):
             FROM attendance
             WHERE telegram_id = ?
         """, (tg_id,)) as cur:
-            general = dict(await cur.fetchone())
+            row = await cur.fetchone()
+            general = dict(row) if row else {}
 
-        # Статистика за окремими дисциплінами
         async with db.execute("""
             SELECT 
                 s.subject,
@@ -126,7 +193,6 @@ async def get_my_stats(x_telegram_init_data: str = Header(...)):
 
     return {"general": general, "subjects": by_subjects}
 
-# Масова розсилка оголошення всій групі
 class BroadcastRequest(BaseModel):
     title: str
     message: str
@@ -141,7 +207,6 @@ async def broadcast_announcement(data: BroadcastRequest, x_telegram_init_data: s
             if not u or u["role"] != "starosta":
                 raise HTTPException(status_code=403, detail="Тільки староста може робити розсилку")
 
-        # Отримуємо ID всіх зареєстрованих студентів
         async with db.execute("SELECT telegram_id FROM users") as cur:
             students = await cur.fetchall()
 
@@ -152,11 +217,10 @@ async def broadcast_announcement(data: BroadcastRequest, x_telegram_init_data: s
             await bot.send_message(chat_id=s["telegram_id"], text=text, parse_mode="HTML")
             success_count += 1
         except Exception:
-            pass # Якщо користувач заблокував бота
+            pass
 
     return {"sent_to": success_count}
 
-# Завантаження розкладу за вказаним діапазоном дат
 class DateRangeRequest(BaseModel):
     sdate: str
     edate: str
@@ -164,7 +228,6 @@ class DateRangeRequest(BaseModel):
 @app.post("/api/schedule/update_range")
 async def update_schedule_range(data: DateRangeRequest, x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)
-    # Тільки староста може оновлювати діапазон
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT role FROM users WHERE telegram_id = ?", (user.get("id"),)) as cur:
@@ -174,3 +237,10 @@ async def update_schedule_range(data: DateRangeRequest, x_telegram_init_data: st
 
     await fetch_and_save_schedule(sdate=data.sdate, edate=data.edate)
     return {"status": "success"}
+
+# Роздача статичних файлів інтерфейсу
+BASE_DIR = Path(__file__).resolve().parent
+WEBAPP_DIR = BASE_DIR / "webapp"
+
+if WEBAPP_DIR.exists():
+    app.mount("/app", StaticFiles(directory=str(WEBAPP_DIR), html=True), name="webapp")

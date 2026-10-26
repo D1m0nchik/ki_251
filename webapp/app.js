@@ -74,7 +74,11 @@ async function loadSchedule() {
       const card = document.createElement("div");
       card.className = `card lesson-card ${item.is_replacement ? 'replacement' : ''}`;
       
-      let replacementHtml = item.is_replacement ? `<div class="replacement-badge">🔴 ${item.replacement_note}</div>` : "";
+      let replacementHtml = item.is_replacement 
+        ? `<div class="replacement-badge" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; color: #ff6b81; font-weight: 600; font-size: 12px;">
+            🔴 ${item.replacement_note || "Увага! Заміна викладача"}
+           </div>` 
+        : "";
       
       // Кнопка журналу присутня ТІЛЬКИ у старости
       let starostaBtn = currentUser.role === "starosta" 

@@ -103,3 +103,110 @@ body {
   border-bottom: 1px dashed #2a2a38;
   padding-bottom: 4px;
 }
+.form-input {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: #121217;
+  border: 1px solid #2a2a38;
+  color: #fff;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.btn-journal {
+  background: #27ae60;
+  color: #fff;
+  border: none;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.filter-card .date-inputs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-card input {
+  width: 100px;
+  padding: 6px;
+  background: #121217;
+  border: 1px solid #2a2a38;
+  color: #fff;
+  border-radius: 6px;
+  text-align: center;
+}
+
+/* Модальне вікно журналу */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 100;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.modal-content {
+  background: var(--card-bg);
+  margin: 15% auto;
+  padding: 18px;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 400px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.close-btn {
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.student-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #2a2a38;
+}
+
+.status-select {
+  background: #121217;
+  color: #fff;
+  border: 1px solid #2a2a38;
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.progress-bar {
+  background: #2a2a38;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress-bar .fill {
+  background: #2ecc71;
+  height: 100%;
+}

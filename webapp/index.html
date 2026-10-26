@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Староста Бот</title>
+  <title>КІ-25-1 Hub</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -14,7 +14,7 @@
         <h2 id="group-title">КІ-25-1</h2>
         <span id="user-role-badge" class="badge">Завантаження...</span>
       </div>
-      <div id="subgroup-indicator" class="subgroup-tag" onclick="openProfileModal()" style="cursor: pointer; text-decoration: underline;">
+      <div id="subgroup-indicator" class="subgroup-tag" onclick="openProfileModal()">
         ...
       </div>
     </header>
@@ -32,7 +32,7 @@
           </div>
         </div>
 
-        <h3>Мій розклад</h3>
+        <h3 class="section-title">Мій розклад</h3>
         <div id="schedule-list" class="schedule-container">
           <p class="loading">Завантаження...</p>
         </div>
@@ -40,41 +40,60 @@
 
       <!-- 2. Вкладка Склад групи (тільки для старости) -->
       <section id="tab-group" class="tab-pane">
-        <h3>Склад групи КІ-25-1</h3>
-        <p class="text-muted" style="font-size:13px;">Тут можна перевести студента в іншу підгрупу</p>
+        <h3 class="section-title">Склад групи КІ-25-1</h3>
+        <p class="text-muted" style="font-size:13px; margin-bottom: 12px;">Розподіл по підгрупах</p>
         <div id="group-students-list" class="students-list"></div>
       </section>
 
-      <!-- 3. Вкладка Оголошення -->
+      <!-- 3. Вкладка Статистика групи (тільки для старости) -->
+      <section id="tab-group-stats" class="tab-pane">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+          <h3 class="section-title" style="margin: 0;">Журнал групи</h3>
+          <button class="btn-download" onclick="downloadAttendanceReport()">📥 Експорт в Excel</button>
+        </div>
+        <p class="text-muted" style="font-size: 13px;">Загальний рейтинг відвідуваності студентів КІ-25-1:</p>
+        <div id="group-stats-table-container"></div>
+      </section>
+
+      <!-- 4. Вкладка Оголошення -->
       <section id="tab-announcements" class="tab-pane">
         <div id="starosta-broadcast-panel" class="card" style="display: none;">
-          <h4>Надіслати важливе оголошення всій групі</h4>
+          <h4>Надіслати оголошення групі</h4>
           <input type="text" id="broadcast-title" placeholder="Тема (наприклад: Перенос пари)" class="form-input">
           <textarea id="broadcast-body" placeholder="Текст повідомлення..." rows="3" class="form-input"></textarea>
           <button class="btn-primary" onclick="sendBroadcastMessage()">Розіслати в Telegram 📢</button>
         </div>
 
-        <h3>Останні новини</h3>
-        <!-- Сюди динамічно завантажуються збережені новини -->
+        <h3 class="section-title">Останні новини</h3>
         <div id="announcements-list">
-          <p class="loading">Завантаження новин...</p>
+          <p class="loading">Завантаження оголошень...</p>
         </div>
       </section>
 
-      <!-- 4. Вкладка Статистика -->
+      <!-- 5. Персональна статистика студента -->
       <section id="tab-stats" class="tab-pane">
-        <h3>Моя статистика відвідуваності</h3>
-        <div class="card stat-summary-card">
-          <h2 id="stat-percent">0%</h2>
-          <p id="stat-counts">Був: 0 | Пропусків: 0 | Запізнень: 0</p>
-          <div class="progress-bar"><div id="stat-progress-fill" class="fill" style="width: 0%;"></div></div>
+        <h3 class="section-title">Моя успішність і відвідування</h3>
+        
+        <!-- Головна картка студента -->
+        <div class="card stat-hero-card">
+          <div class="stat-circle-box">
+            <span id="stat-percent" class="stat-big-num">0%</span>
+            <span class="stat-circle-label">присутність</span>
+          </div>
+          <div class="stat-breakdown">
+            <div class="stat-item"><span class="dot present"></span> Був: <strong id="stat-pres">0</strong></div>
+            <div class="stat-item"><span class="dot absent"></span> Пропуски: <strong id="stat-abs">0</strong></div>
+            <div class="stat-item"><span class="dot late"></span> Запізнення: <strong id="stat-late">0</strong></div>
+            <div class="stat-item"><span class="dot excused"></span> Поважні: <strong id="stat-exc">0</strong></div>
+          </div>
         </div>
-        <h4>По дисциплінах</h4>
+
+        <h4 style="margin: 20px 0 10px 0;">Відвідуваність по дисциплінах</h4>
         <div id="subject-stats-list"></div>
       </section>
     </main>
 
-    <!-- Модальне вікно профілю (ПІБ та Підгрупа) -->
+    <!-- Модальні вікна -->
     <div id="profile-modal" class="modal">
       <div class="modal-content">
         <div class="modal-header">
@@ -82,8 +101,8 @@
           <span class="close-btn" onclick="closeProfileModal()">&times;</span>
         </div>
         <p class="text-muted" style="font-size:13px;">Вкажіть справжнє ПІБ для журналу старости</p>
-        <input type="text" id="profile-fullname" placeholder="Прізвище та Ім'я" class="form-input">
-        <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Ваша підгрупа:</label>
+        <input type="text" id="profile-fullname" placeholder="Шевченко Тарас" class="form-input">
+        <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Підгрупа:</label>
         <select id="profile-subgroup" class="form-input">
           <option value="1">1 підгрупа</option>
           <option value="2">2 підгрупа</option>
@@ -92,22 +111,22 @@
       </div>
     </div>
 
-    <!-- Модальне вікно старости: Відмітка на парі -->
     <div id="attendance-modal" class="modal">
       <div class="modal-content">
         <div class="modal-header">
           <h3 id="modal-lesson-title">Відмітка на парі</h3>
           <span class="close-btn" onclick="closeAttendanceModal()">&times;</span>
         </div>
-        <p id="modal-lesson-info" class="text-muted"></p>
         <div id="modal-students-list" class="students-list"></div>
         <button class="btn-primary" style="width: 100%; margin-top: 15px;" onclick="saveAttendance()">Зберегти журнал</button>
       </div>
     </div>
 
+    <!-- Навігація внизу -->
     <nav class="bottom-nav">
       <button class="nav-item active" onclick="switchTab('tab-schedule', this)">Розклад</button>
       <button id="nav-group-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group', this)">Група</button>
+      <button id="nav-group-stats-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group-stats', this)">Звіт групи</button>
       <button class="nav-item" onclick="switchTab('tab-announcements', this)">Оголошення</button>
       <button class="nav-item" onclick="switchTab('tab-stats', this)">Статистика</button>
     </nav>

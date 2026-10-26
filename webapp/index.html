@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Староста Бот</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <header class="header">
+      <div>
+        <h2 id="group-title">КІ-25-1</h2>
+        <span id="user-role-badge" class="badge">Завантаження...</span>
+      </div>
+      <div id="subgroup-indicator" class="subgroup-tag">...</div>
+    </header>
+
+    <main class="content">
+      <!-- Вкладка Розклад -->
+      <section id="tab-schedule" class="tab-pane active">
+        <h3>Мій розклад</h3>
+        <div id="schedule-list" class="schedule-container">
+          <p class="loading">Завантаження пар з сайту університету...</p>
+        </div>
+      </section>
+
+      <!-- Вкладка Оголошення -->
+      <section id="tab-announcements" class="tab-pane">
+        <h3>Оголошення</h3>
+        <div class="card">
+          <h4>Модульний контроль</h4>
+          <p>Не забудьте закрити лабораторні роботи з ООП до п'ятниці.</p>
+        </div>
+      </section>
+
+      <!-- Вкладка Статистика -->
+      <section id="tab-stats" class="tab-pane">
+        <h3>Відвідуваність</h3>
+        <div class="card">
+          <p>Присутність у поточному семестрі: <strong>100%</strong></p>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav-item active" onclick="switchTab('tab-schedule', this)">Розклад</button>
+      <button class="nav-item" onclick="switchTab('tab-announcements', this)">Оголошення</button>
+      <button class="nav-item" onclick="switchTab('tab-stats', this)">Статистика</button>
+    </nav>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

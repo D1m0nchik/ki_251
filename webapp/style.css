@@ -240,3 +240,83 @@ body {
   background: #2ecc71;
   height: 100%;
 }
+
+/* Кнопка експорту файлу */
+.btn-download {
+  background: #27ae60;
+  color: #fff;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.btn-download:active {
+  opacity: 0.8;
+}
+
+/* Картка персональної статистики */
+.stat-hero-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 20px 14px;
+  background: linear-gradient(135deg, #1e1e2d 0%, #171722 100%);
+  border: 1px solid #323248;
+}
+
+.stat-circle-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 3px solid #6c5ce7;
+  background: rgba(108, 92, 231, 0.1);
+}
+
+.stat-big-num {
+  font-size: 24px;
+  font-weight: 800;
+  color: #a29bfe;
+}
+
+.stat-circle-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.stat-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot.present { background: #2ecc71; }
+.dot.absent { background: #e74c3c; }
+.dot.late { background: #f39c12; }
+.dot.excused { background: #3498db; }
+
+/* Картка списку студентів у звіті старости */
+.group-student-stat-card {
+  margin-bottom: 8px;
+  border-left: 3px solid #6c5ce7;
+}

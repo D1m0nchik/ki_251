@@ -72,10 +72,11 @@ async def get_schedule(x_telegram_init_data: str = Header(...)):
             user_row = await cur.fetchone()
             subgroup = user_row["subgroup"] if user_row else 1
             
+        # Сортуємо за id ASC — це збереже точний хронологічний порядок додавання парсером
         async with db.execute("""
             SELECT * FROM schedule 
             WHERE target_subgroup IN (0, ?) 
-            ORDER BY date_str ASC, lesson_number ASC
+            ORDER BY id ASC
         """, (subgroup,)) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]

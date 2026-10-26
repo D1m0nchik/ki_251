@@ -14,13 +14,14 @@
         <h2 id="group-title">КІ-25-1</h2>
         <span id="user-role-badge" class="badge">Завантаження...</span>
       </div>
-      <div id="subgroup-indicator" class="subgroup-tag">...</div>
+      <div id="subgroup-indicator" class="subgroup-tag" onclick="openProfileModal()" style="cursor: pointer; text-decoration: underline;">
+        ...
+      </div>
     </header>
 
     <main class="content">
-      <!-- 1. Вкладка Розклад + Вибір інтервалу дат -->
+      <!-- 1. Вкладка Розклад -->
       <section id="tab-schedule" class="tab-pane active">
-        <!-- Блок зміни дат для старости -->
         <div id="starosta-date-filter" class="card filter-card" style="display: none;">
           <h4>Задати період розкладу:</h4>
           <div class="date-inputs">
@@ -37,7 +38,14 @@
         </div>
       </section>
 
-      <!-- 2. Вкладка Оголошення (Студенти читають, староста надсилає) -->
+      <!-- 2. Вкладка Склад групи (тільки для старости) -->
+      <section id="tab-group" class="tab-pane">
+        <h3>Склад групи КІ-25-1</h3>
+        <p class="text-muted" style="font-size:13px;">Тут можна перевести студента в іншу підгрупу</p>
+        <div id="group-students-list" class="students-list"></div>
+      </section>
+
+      <!-- 3. Вкладка Оголошення -->
       <section id="tab-announcements" class="tab-pane">
         <div id="starosta-broadcast-panel" class="card" style="display: none;">
           <h4>Надіслати важливе оголошення всій групі</h4>
@@ -53,7 +61,7 @@
         </div>
       </section>
 
-      <!-- 3. Вкладка Статистика (Персональна для кожного студента) -->
+      <!-- 4. Вкладка Статистика -->
       <section id="tab-stats" class="tab-pane">
         <h3>Моя статистика відвідуваності</h3>
         <div class="card stat-summary-card">
@@ -66,7 +74,25 @@
       </section>
     </main>
 
-    <!-- Модальне вікно старости: Відмітка відвідуваності на пару -->
+    <!-- Модальне вікно профілю (ПІБ та Підгрупа) -->
+    <div id="profile-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Налаштування профілю</h3>
+          <span class="close-btn" onclick="closeProfileModal()">&times;</span>
+        </div>
+        <p class="text-muted" style="font-size:13px;">Вкажіть справжнє ПІБ для журналу старости</p>
+        <input type="text" id="profile-fullname" placeholder="Прізвище та Ім'я" class="form-input">
+        <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Ваша підгрупа:</label>
+        <select id="profile-subgroup" class="form-input">
+          <option value="1">1 підгрупа</option>
+          <option value="2">2 підгрупа</option>
+        </select>
+        <button class="btn-primary" style="width: 100%; margin-top: 10px;" onclick="saveProfile()">Зберегти</button>
+      </div>
+    </div>
+
+    <!-- Модальне вікно старости: Відмітка на парі -->
     <div id="attendance-modal" class="modal">
       <div class="modal-content">
         <div class="modal-header">
@@ -81,6 +107,7 @@
 
     <nav class="bottom-nav">
       <button class="nav-item active" onclick="switchTab('tab-schedule', this)">Розклад</button>
+      <button id="nav-group-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group', this)">Група</button>
       <button class="nav-item" onclick="switchTab('tab-announcements', this)">Оголошення</button>
       <button class="nav-item" onclick="switchTab('tab-stats', this)">Статистика</button>
     </nav>

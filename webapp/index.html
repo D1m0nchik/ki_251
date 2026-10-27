@@ -22,7 +22,7 @@
     <main class="content">
       <!-- 1. Вкладка Розклад -->
       <section id="tab-schedule" class="tab-pane active">
-        <!-- Блок вибору діапазону з авторозстановкою крапок -->
+        <!-- Блок введення діапазону з авторозстановкою крапок -->
         <div class="card filter-card">
           <h4>Отримати розклад за період:</h4>
           <div class="date-inputs">
@@ -30,7 +30,7 @@
             <span>—</span>
             <input type="text" id="filter-edate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
             <button class="btn-primary" onclick="applyLocalDateFilter()">Показати</button>
-            <button class="btn-secondary" onclick="showCurrentWeekOnly()">Поточний тиждень</button>
+            <button class="btn-secondary" onclick="document.getElementById('filter-sdate').value=''; document.getElementById('filter-edate').value=''; showCurrentWeekOnly();">Цей тиждень</button>
           </div>
         </div>
 
@@ -38,7 +38,14 @@
           <h3 class="section-title" id="schedule-view-title" style="margin:0;">Розклад на тиждень</h3>
           <button class="btn-sync" onclick="syncFullMonth()" title="Оновити кеш на місяць">🔄 Завантажити на місяць</button>
         </div>
-        
+
+        <!-- Перемикач підгруп (тільки для старости) -->
+        <div id="starosta-subgroup-switcher" class="subgroup-switcher" style="display: none;">
+          <button class="sg-btn active" onclick="switchStarostaViewSubgroup(0, this)">Всі пари</button>
+          <button class="sg-btn" onclick="switchStarostaViewSubgroup(1, this)">1 підгрупа</button>
+          <button class="sg-btn" onclick="switchStarostaViewSubgroup(2, this)">2 підгрупа</button>
+        </div>
+
         <div id="schedule-list" class="schedule-container">
           <p class="loading">Завантаження розкладу...</p>
         </div>
@@ -81,7 +88,6 @@
         <h3 class="section-title">Моя успішність і відвідування</h3>
         
         <div class="card stat-hero-card">
-          <!-- Багатоколірне сегментоване кільце -->
           <div class="stat-ring-container">
             <div id="stat-multicolor-ring" class="stat-multicolor-ring">
               <div class="stat-inner-circle">

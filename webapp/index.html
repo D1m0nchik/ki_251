@@ -22,9 +22,9 @@
     <main class="content">
       <!-- 1. Вкладка Розклад -->
       <section id="tab-schedule" class="tab-pane active">
-        <!-- Локальний фільтр за датами для кожного користувача -->
-        <div class="card filter-card">
-          <h4>Фільтр за датами:</h4>
+        <!-- Фільтр дат приховано для звичайних студентів, показується старості -->
+        <div id="starosta-date-filter" class="card filter-card" style="display: none;">
+          <h4>Задати період розкладу:</h4>
           <div class="date-inputs">
             <input type="text" id="filter-sdate" placeholder="01.11.2026" maxlength="10">
             <span>—</span>
@@ -123,13 +123,28 @@
       </div>
     </div>
 
-    <!-- Навігація внизу -->
+    <!-- Зручне збільшене нижнє меню з іконками -->
     <nav class="bottom-nav">
-      <button class="nav-item active" onclick="switchTab('tab-schedule', this)">Розклад</button>
-      <button id="nav-group-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group', this)">Група</button>
-      <button id="nav-group-stats-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group-stats', this)">Звіт групи</button>
-      <button class="nav-item" onclick="switchTab('tab-announcements', this)">Оголошення</button>
-      <button class="nav-item" onclick="switchTab('tab-stats', this)">Статистика</button>
+      <button class="nav-item active" onclick="switchTab('tab-schedule', this)">
+        <span class="nav-icon">📅</span>
+        <span class="nav-label">Розклад</span>
+      </button>
+      <button id="nav-group-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group', this)">
+        <span class="nav-icon">👥</span>
+        <span class="nav-label">Група</span>
+      </button>
+      <button id="nav-group-stats-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group-stats', this)">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Журнал</span>
+      </button>
+      <button class="nav-item" onclick="switchTab('tab-announcements', this)">
+        <span class="nav-icon">📢</span>
+        <span class="nav-label">Новини</span>
+      </button>
+      <button class="nav-item" onclick="switchTab('tab-stats', this)">
+        <span class="nav-icon">📈</span>
+        <span class="nav-label">Успішність</span>
+      </button>
     </nav>
   </div>
   <script src="app.js"></script>

@@ -22,21 +22,25 @@
     <main class="content">
       <!-- 1. Вкладка Розклад -->
       <section id="tab-schedule" class="tab-pane active">
-        <!-- Фільтр дат приховано для звичайних студентів, показується старості -->
-        <div id="starosta-date-filter" class="card filter-card" style="display: none;">
-          <h4>Задати період розкладу:</h4>
+        <!-- Блок вибору діапазону з авторозстановкою крапок -->
+        <div class="card filter-card">
+          <h4>Отримати розклад за період:</h4>
           <div class="date-inputs">
-            <input type="text" id="filter-sdate" placeholder="01.11.2026" maxlength="10">
+            <input type="text" id="filter-sdate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
             <span>—</span>
-            <input type="text" id="filter-edate" placeholder="15.11.2026" maxlength="10">
-            <button class="btn-primary" onclick="applyLocalDateFilter()">Фільтрувати</button>
-            <button class="btn-secondary" onclick="document.getElementById('filter-sdate').value=''; document.getElementById('filter-edate').value=''; applyLocalDateFilter();">Всі</button>
+            <input type="text" id="filter-edate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
+            <button class="btn-primary" onclick="applyLocalDateFilter()">Показати</button>
+            <button class="btn-secondary" onclick="showCurrentWeekOnly()">Поточний тиждень</button>
           </div>
         </div>
 
-        <h3 class="section-title">Мій розклад</h3>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin: 14px 0 8px 0;">
+          <h3 class="section-title" id="schedule-view-title" style="margin:0;">Розклад на тиждень</h3>
+          <button class="btn-sync" onclick="syncFullMonth()" title="Оновити кеш на місяць">🔄 Завантажити на місяць</button>
+        </div>
+        
         <div id="schedule-list" class="schedule-container">
-          <p class="loading">Завантаження...</p>
+          <p class="loading">Завантаження розкладу...</p>
         </div>
       </section>
 
@@ -72,15 +76,21 @@
         </div>
       </section>
 
-      <!-- 5. Персональна статистика студента -->
+      <!-- 5. Персональна статистика студента з багатоколірною діаграмою -->
       <section id="tab-stats" class="tab-pane">
         <h3 class="section-title">Моя успішність і відвідування</h3>
         
         <div class="card stat-hero-card">
-          <div class="stat-circle-box">
-            <span id="stat-percent" class="stat-big-num">0%</span>
-            <span class="stat-circle-label">присутність</span>
+          <!-- Багатоколірне сегментоване кільце -->
+          <div class="stat-ring-container">
+            <div id="stat-multicolor-ring" class="stat-multicolor-ring">
+              <div class="stat-inner-circle">
+                <span id="stat-percent" class="stat-big-num">0%</span>
+                <span class="stat-circle-label">присутність</span>
+              </div>
+            </div>
           </div>
+
           <div class="stat-breakdown">
             <div class="stat-item"><span class="dot present"></span> Був: <strong id="stat-pres">0</strong></div>
             <div class="stat-item"><span class="dot absent"></span> Пропуски: <strong id="stat-abs">0</strong></div>
@@ -123,7 +133,7 @@
       </div>
     </div>
 
-    <!-- Зручне збільшене нижнє меню з іконками -->
+    <!-- Нижня навігація -->
     <nav class="bottom-nav">
       <button class="nav-item active" onclick="switchTab('tab-schedule', this)">
         <span class="nav-icon">📅</span>

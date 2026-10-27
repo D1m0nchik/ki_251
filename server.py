@@ -109,14 +109,23 @@ async def get_schedule(x_telegram_init_data: str = Header(...)):
     
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        user_row = await conn.fetchrow("SELECT subgroup FROM users WHERE telegram_id = $1", tg_id)
+        user_row = await conn.fetchrow("SELECT role, subgroup FROM users WHERE telegram_id = $1", tg_id)
+        role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
-            
-        rows = await conn.fetch("""
-            SELECT * FROM schedule 
-            WHERE target_subgroup IN (0, $1) 
-            ORDER BY id ASC
-        """, subgroup)
+        
+        # Якщо староста — повертаємо ВСІ пари (спільні + 1 підгрупа + 2 підгрупа)
+        if role == "starosta":
+            rows = await conn.fetch("""
+                SELECT * FROM schedule 
+                ORDER BY id ASC
+            """)
+        else:
+            rows = await conn.fetch("""
+                SELECT * FROM schedule 
+                WHERE target_subgroup IN (0, $1) 
+                ORDER BY id ASC
+            """, subgroup)
+
         return [dict(r) for r in rows]
 
 # Оновлення та кешування розкладу на 30 днів уперед

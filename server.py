@@ -113,12 +113,9 @@ async def get_schedule(x_telegram_init_data: str = Header(...)):
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
         
-        # Якщо староста — повертаємо ВСІ пари (спільні + 1 підгрупа + 2 підгрупа)
+        # Староста отримує розклад обох підгруп (0, 1, 2)
         if role == "starosta":
-            rows = await conn.fetch("""
-                SELECT * FROM schedule 
-                ORDER BY id ASC
-            """)
+            rows = await conn.fetch("SELECT * FROM schedule ORDER BY id ASC")
         else:
             rows = await conn.fetch("""
                 SELECT * FROM schedule 
@@ -128,7 +125,7 @@ async def get_schedule(x_telegram_init_data: str = Header(...)):
 
         return [dict(r) for r in rows]
 
-# Оновлення та кешування розкладу на 30 днів уперед
+# Автоматичний кеш розкладу на місяць вперед
 @app.post("/api/schedule/sync_month")
 async def sync_month_schedule():
     now = datetime.now()
@@ -136,6 +133,16 @@ async def sync_month_schedule():
     edate = (now + timedelta(days=30)).strftime("%d.%m.%Y")
     await fetch_and_save_schedule(sdate=sdate, edate=edate)
     return {"status": "success", "synced_from": sdate, "synced_to": edate}
+
+# Запит будь-якого довільного періоду розкладу (наприклад, минулі місяці)
+class DateRangeRequest(BaseModel):
+    sdate: str
+    edate: str
+
+@app.post("/api/schedule/fetch_range")
+async def fetch_schedule_range(data: DateRangeRequest):
+    await fetch_and_save_schedule(sdate=data.sdate.strip(), edate=data.edate.strip())
+    return {"status": "success"}
 
 @app.get("/api/group/students")
 async def get_all_group_students(x_telegram_init_data: str = Header(...)):

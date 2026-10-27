@@ -2,11 +2,14 @@ import os
 import json
 import hmac
 import hashlib
+import csv
+import io
 from urllib.parse import parse_qsl
 from pathlib import Path
 from typing import Dict
+from datetime import datetime, timedelta
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -116,6 +119,15 @@ async def get_schedule(x_telegram_init_data: str = Header(...)):
         """, subgroup)
         return [dict(r) for r in rows]
 
+# Оновлення та кешування розкладу на 30 днів уперед
+@app.post("/api/schedule/sync_month")
+async def sync_month_schedule():
+    now = datetime.now()
+    sdate = now.strftime("%d.%m.%Y")
+    edate = (now + timedelta(days=30)).strftime("%d.%m.%Y")
+    await fetch_and_save_schedule(sdate=sdate, edate=edate)
+    return {"status": "success", "synced_from": sdate, "synced_to": edate}
+
 @app.get("/api/group/students")
 async def get_all_group_students(x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)
@@ -223,6 +235,96 @@ async def get_my_stats(x_telegram_init_data: str = Header(...)):
 
     return {"general": general, "subjects": by_subjects}
 
+@app.get("/api/group/stats")
+async def get_group_stats(x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        query = """
+            SELECT 
+                u.telegram_id,
+                u.full_name,
+                u.subgroup,
+                COUNT(a.id) as total_checked,
+                SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END) as present_count,
+                SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+                SUM(CASE WHEN a.status = 'late' THEN 1 ELSE 0 END) as late_count,
+                SUM(CASE WHEN a.status = 'excused' THEN 1 ELSE 0 END) as excused_count
+            FROM users u
+            LEFT JOIN attendance a ON a.telegram_id = u.telegram_id
+            GROUP BY u.telegram_id, u.full_name, u.subgroup
+            ORDER BY u.full_name ASC
+        """
+        rows = await conn.fetch(query)
+        result = []
+        for r in rows:
+            d = dict(r)
+            total = d["total_checked"] or 0
+            present = d["present_count"] or 0
+            d["percent"] = round((present / total * 100)) if total > 0 else 100
+            result.append(d)
+        return result
+
+@app.get("/api/attendance/export")
+async def export_attendance_file(x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        query = """
+            SELECT 
+                s.date_str,
+                s.day_of_week,
+                s.lesson_number,
+                s.subject,
+                u.full_name,
+                u.subgroup,
+                CASE 
+                    WHEN a.status = 'present' THEN 'Присутній'
+                    WHEN a.status = 'absent' THEN 'Пропуск (Н)'
+                    WHEN a.status = 'late' THEN 'Запізнився'
+                    WHEN a.status = 'excused' THEN 'Поважна причина'
+                    ELSE 'Не відмічено'
+                END as status_text
+            FROM attendance a
+            JOIN schedule s ON s.id = a.schedule_id
+            JOIN users u ON u.telegram_id = a.telegram_id
+            ORDER BY s.id ASC, u.full_name ASC
+        """
+        records = await conn.fetch(query)
+
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.writer(output, delimiter=';')
+    writer.writerow(["Дата", "День", "Пара", "Дисципліна", "ПІБ Студента", "Підгрупа", "Статус"])
+
+    for r in records:
+        writer.writerow([
+            r["date_str"],
+            r["day_of_week"],
+            r["lesson_number"],
+            r["subject"],
+            r["full_name"],
+            f"{r['subgroup']} підгрупа",
+            r["status_text"]
+        ])
+
+    csv_data = output.getvalue().encode('utf-8-sig')
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=attendance_report_KI251.csv"
+        }
+    )
+
 @app.get("/api/announcements")
 async def get_announcements():
     pool = await get_db_pool()
@@ -265,122 +367,8 @@ async def broadcast_announcement(data: BroadcastRequest, x_telegram_init_data: s
 
     return {"sent_to": success_count}
 
-class DateRangeRequest(BaseModel):
-    sdate: str
-    edate: str
-
-@app.post("/api/schedule/update_range")
-async def update_schedule_range(data: DateRangeRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
-    await fetch_and_save_schedule(sdate=data.sdate, edate=data.edate)
-    return {"status": "success"}
-
 BASE_DIR = Path(__file__).resolve().parent
 WEBAPP_DIR = BASE_DIR / "webapp"
 
 if WEBAPP_DIR.exists():
     app.mount("/app", StaticFiles(directory=str(WEBAPP_DIR), html=True), name="webapp")
-import csv
-import io
-from fastapi import Response
-
-# 1. Загальна зведена статистика для старости по кожному студенту
-@app.get("/api/group/stats")
-async def get_group_stats(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
-        # Агрегуємо відвідуваність кожного студента
-        query = """
-            SELECT 
-                u.telegram_id,
-                u.full_name,
-                u.subgroup,
-                COUNT(a.id) as total_checked,
-                SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END) as present_count,
-                SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
-                SUM(CASE WHEN a.status = 'late' THEN 1 ELSE 0 END) as late_count,
-                SUM(CASE WHEN a.status = 'excused' THEN 1 ELSE 0 END) as excused_count
-            FROM users u
-            LEFT JOIN attendance a ON a.telegram_id = u.telegram_id
-            GROUP BY u.telegram_id, u.full_name, u.subgroup
-            ORDER BY u.full_name ASC
-        """
-        rows = await conn.fetch(query)
-        result = []
-        for r in rows:
-            d = dict(r)
-            total = d["total_checked"] or 0
-            present = d["present_count"] or 0
-            d["percent"] = round((present / total * 100)) if total > 0 else 100
-            result.append(d)
-        return result
-
-# 2. Генерація та вивантаження файлу звіту (.csv з підтримкою Excel UTF-8-BOM)
-@app.get("/api/attendance/export")
-async def export_attendance_file(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
-        query = """
-            SELECT 
-                s.date_str,
-                s.day_of_week,
-                s.lesson_number,
-                s.subject,
-                u.full_name,
-                u.subgroup,
-                CASE 
-                    WHEN a.status = 'present' THEN 'Присутній'
-                    WHEN a.status = 'absent' THEN 'Пропуск (Н)'
-                    WHEN a.status = 'late' THEN 'Запізнився'
-                    WHEN a.status = 'excused' THEN 'Поважна причина'
-                    ELSE 'Не відмічено'
-                END as status_text
-            FROM attendance a
-            JOIN schedule s ON s.id = a.schedule_id
-            JOIN users u ON u.telegram_id = a.telegram_id
-            ORDER BY s.id ASC, u.full_name ASC
-        """
-        records = await conn.fetch(query)
-
-    # Формуємо CSV буфер
-    output = io.StringIO()
-    # UTF-8 BOM для коректного відображення українських літер в Excel
-    output.write('\ufeff')
-    writer = csv.writer(output, delimiter=';')
-    writer.writerow(["Дата", "День", "Пара", "Дисципліна", "ПІБ Студента", "Підгрупа", "Статус"])
-
-    for r in records:
-        writer.writerow([
-            r["date_str"],
-            r["day_of_week"],
-            r["lesson_number"],
-            r["subject"],
-            r["full_name"],
-            f"{r['subgroup']} підгрупа",
-            r["status_text"]
-        ])
-
-    csv_data = output.getvalue().encode('utf-8-sig')
-    return Response(
-        content=csv_data,
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": "attachment; filename=attendance_report_KI251.csv"
-        }
-    )

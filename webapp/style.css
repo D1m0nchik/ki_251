@@ -26,7 +26,7 @@ html, body {
   user-select: none;
 }
 
-/* Запобігає подвійним клікам і залипанню на мобільних пристроях */
+/* Запобігає залипанню кнопок і подвійним тачам */
 button, select, input, textarea {
   touch-action: manipulation;
   font-family: inherit;
@@ -36,7 +36,7 @@ button, select, input, textarea {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  height: 100dvh; /* Динамічна висота для точного розрахунку в Telegram */
+  height: 100dvh;
 }
 
 /* Хедер */
@@ -71,7 +71,7 @@ button, select, input, textarea {
   cursor: pointer;
 }
 
-/* Основний контент */
+/* Основний скрол-контейнер */
 .content {
   flex: 1;
   overflow-y: auto;
@@ -123,7 +123,7 @@ button, select, input, textarea {
   margin-bottom: 6px;
 }
 
-/* Секції днів розкладу */
+/* Розклад за днями */
 .day-section {
   margin-bottom: 22px;
 }
@@ -137,7 +137,7 @@ button, select, input, textarea {
   padding-bottom: 4px;
 }
 
-/* Елементи форм */
+/* Поля вводу */
 .form-input {
   width: 100%;
   padding: 10px;
@@ -207,7 +207,7 @@ button, select, input, textarea {
   opacity: 0.8;
 }
 
-/* Адаптивний блок фільтра дат */
+/* Фільтр дат */
 .filter-card {
   width: 100%;
 }
@@ -250,7 +250,7 @@ button, select, input, textarea {
   flex: 1 1 50px;
 }
 
-/* Модальні вікна (єдиний правильний оверлей) */
+/* Модальні вікна */
 .modal {
   display: none;
   position: fixed;
@@ -293,7 +293,7 @@ button, select, input, textarea {
   cursor: pointer;
 }
 
-/* Рядки студентів у журналі та складі групи */
+/* Списки студентів */
 .students-list {
   max-height: 50vh;
   overflow-y: auto;
@@ -316,7 +316,7 @@ button, select, input, textarea {
   font-size: 13px;
 }
 
-/* Прогрес-бари */
+/* Прогрес-бари дисциплін */
 .progress-bar {
   background: #2a2a38;
   height: 8px;
@@ -332,7 +332,7 @@ button, select, input, textarea {
   transition: width 0.3s ease;
 }
 
-/* Картка персональної статистики */
+/* Персональна статистика */
 .stat-hero-card {
   display: flex;
   align-items: center;
@@ -391,18 +391,20 @@ button, select, input, textarea {
 .dot.late { background: #f39c12; }
 .dot.excused { background: #3498db; }
 
-/* Картка списку студентів у звіті старости */
+/* Картка рейтингу у звіті старости */
 .group-student-stat-card {
   margin-bottom: 8px;
   border-left: 3px solid var(--accent);
 }
 
-/* Нижня навігація */
+/* Збільшене та комфортне нижнє меню */
 .bottom-nav {
   display: flex;
-  background: #15151c;
+  background: #161620;
   border-top: 1px solid #2a2a38;
-  padding: 4px 0;
+  padding: 8px 6px calc(8px + env(safe-area-inset-bottom));
+  min-height: 64px;
+  align-items: center;
 }
 
 .nav-item {
@@ -410,14 +412,38 @@ button, select, input, textarea {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 11px;
-  padding: 8px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 2px;
   cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.15s ease-in-out;
+}
+
+.nav-icon {
+  font-size: 19px;
+  line-height: 1;
+}
+
+.nav-label {
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
-  transition: color 0.15s;
 }
 
 .nav-item.active {
   color: #a29bfe;
+}
+
+.nav-item.active .nav-label {
   font-weight: 700;
+  color: #ffffff;
+}
+
+.nav-item:active {
+  background: rgba(255, 255, 255, 0.05);
+  transform: scale(0.96);
 }

@@ -20,13 +20,11 @@ html, body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   overflow-x: hidden;
-  /* Блокує конфлікт свайпів Telegram і зависання тачів */
   overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
 
-/* Запобігає залипанню кнопок і подвійним тачам */
 button, select, input, textarea {
   touch-action: manipulation;
   font-family: inherit;
@@ -71,7 +69,7 @@ button, select, input, textarea {
   cursor: pointer;
 }
 
-/* Основний скрол-контейнер */
+/* Контент */
 .content {
   flex: 1;
   overflow-y: auto;
@@ -123,7 +121,7 @@ button, select, input, textarea {
   margin-bottom: 6px;
 }
 
-/* Розклад за днями */
+/* Секції розкладу */
 .day-section {
   margin-bottom: 22px;
 }
@@ -137,7 +135,7 @@ button, select, input, textarea {
   padding-bottom: 4px;
 }
 
-/* Поля вводу */
+/* Форми */
 .form-input {
   width: 100%;
   padding: 10px;
@@ -207,7 +205,53 @@ button, select, input, textarea {
   opacity: 0.8;
 }
 
-/* Фільтр дат */
+.btn-sync {
+  background: #232332;
+  color: #a29bfe;
+  border: 1px solid #3b3b52;
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.btn-sync:active {
+  transform: scale(0.95);
+  background: #2f2f44;
+}
+
+/* Перемикач підгруп старости */
+.subgroup-switcher {
+  display: flex;
+  gap: 6px;
+  background: #181822;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid #2a2a38;
+  margin-bottom: 12px;
+}
+
+.sg-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sg-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Блок фільтра дат */
 .filter-card {
   width: 100%;
 }
@@ -247,7 +291,7 @@ button, select, input, textarea {
 }
 
 .filter-card .btn-secondary {
-  flex: 1 1 50px;
+  flex: 1 1 100px;
 }
 
 /* Модальні вікна */
@@ -332,7 +376,7 @@ button, select, input, textarea {
   transition: width 0.3s ease;
 }
 
-/* Персональна статистика */
+/* Персональна статистика з кільцевою діаграмою */
 .stat-hero-card {
   display: flex;
   align-items: center;
@@ -342,16 +386,33 @@ button, select, input, textarea {
   border: 1px solid #323248;
 }
 
-.stat-circle-box {
+.stat-ring-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stat-multicolor-ring {
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  background: conic-gradient(#2ecc71 0deg 360deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  transition: background 0.4s ease;
+}
+
+.stat-inner-circle {
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  background: #181822;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 86px;
-  height: 86px;
-  border-radius: 50%;
-  border: 3px solid var(--accent);
-  background: rgba(108, 92, 231, 0.12);
 }
 
 .stat-big-num {
@@ -387,9 +448,9 @@ button, select, input, textarea {
   display: inline-block;
 }
 .dot.present { background: #2ecc71; }
-.dot.absent { background: #e74c3c; }
-.dot.late { background: #f39c12; }
-.dot.excused { background: #3498db; }
+.dot.absent { background: #ff4757; }
+.dot.late { background: #ffa502; }
+.dot.excused { background: #1e90ff; }
 
 /* Картка рейтингу у звіті старости */
 .group-student-stat-card {
@@ -446,51 +507,4 @@ button, select, input, textarea {
 .nav-item:active {
   background: rgba(255, 255, 255, 0.05);
   transform: scale(0.96);
-}
-/* Багатокольорове кільце відвідуваності */
-.stat-ring-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.stat-multicolor-ring {
-  width: 104px;
-  height: 104px;
-  border-radius: 50%;
-  /* Фоновий дефолтний градієнт, який змінюється динамічно через JS */
-  background: conic-gradient(#2ecc71 0deg 360deg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  transition: background 0.4s ease;
-}
-
-.stat-inner-circle {
-  width: 82px;
-  height: 82px;
-  border-radius: 50%;
-  background: #181822;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.btn-sync {
-  background: #232332;
-  color: #a29bfe;
-  border: 1px solid #3b3b52;
-  font-size: 11px;
-  padding: 5px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  transition: all 0.2s;
-}
-
-.btn-sync:active {
-  transform: scale(0.95);
-  background: #2f2f44;
 }

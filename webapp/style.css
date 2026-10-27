@@ -7,11 +7,18 @@
   --text-muted: #8b8b9e;
 }
 
+* {
+  box-sizing: border-box;
+}
+
 html, body {
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
+  background-color: var(--bg-color);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   overflow-x: hidden;
   /* Блокує конфлікт свайпів Telegram і зависання тачів */
   overscroll-behavior-y: none;
@@ -19,66 +26,90 @@ html, body {
   user-select: none;
 }
 
-/* Гарантоване приховування модальних вікон, щоб вони не блокували кліки */
-.modal {
-  display: none;
-  position: fixed;
-  z-index: 1000;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.7);
-  pointer-events: auto;
-}
-
-/* Запобігає залипанню кнопок після натискання */
-button, select, input {
+/* Запобігає подвійним клікам і залипанню на мобільних пристроях */
+button, select, input, textarea {
   touch-action: manipulation;
+  font-family: inherit;
 }
 
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* Динамічна висота для точного розрахунку в Telegram */
 }
 
+/* Хедер */
 .header {
-  padding: 16px;
+  padding: 14px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid #2a2a38;
+  background: #15151c;
 }
 
-.header h2 { margin: 0; font-size: 20px; }
+.header h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+}
 
 .badge {
   font-size: 11px;
   background: var(--accent);
+  color: #fff;
   padding: 2px 8px;
   border-radius: 12px;
+  margin-top: 4px;
+  display: inline-block;
 }
 
 .subgroup-tag {
   font-size: 13px;
   color: var(--text-muted);
+  cursor: pointer;
 }
 
+/* Основний контент */
 .content {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
+  -webkit-overflow-scrolling: touch;
 }
 
-.tab-pane { display: none; }
-.tab-pane.active { display: block; }
+.tab-pane {
+  display: none;
+}
 
+.tab-pane.active {
+  display: block;
+}
+
+.section-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 16px 0 12px 0;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+.loading {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 14px;
+}
+
+/* Картки */
 .card {
   background: var(--card-bg);
   border-radius: 12px;
   padding: 14px;
   margin-bottom: 12px;
+  border: 1px solid #272736;
 }
 
 .lesson-card.replacement {
@@ -92,39 +123,21 @@ button, select, input {
   margin-bottom: 6px;
 }
 
-.bottom-nav {
-  display: flex;
-  background: #181820;
-  border-top: 1px solid #2a2a38;
-  padding: 8px 0;
-}
-
-.nav-item {
-  flex: 1;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 13px;
-  padding: 10px 0;
-  cursor: pointer;
-}
-
-.nav-item.active {
-  color: var(--accent);
-  font-weight: bold;
-}
+/* Секції днів розкладу */
 .day-section {
-  margin-bottom: 24px;
+  margin-bottom: 22px;
 }
 
 .day-header {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  color: var(--accent);
-  margin: 16px 0 10px 4px;
+  color: #a29bfe;
+  margin: 14px 0 8px 2px;
   border-bottom: 1px dashed #2a2a38;
   padding-bottom: 4px;
 }
+
+/* Елементи форм */
 .form-input {
   width: 100%;
   padding: 10px;
@@ -133,17 +146,38 @@ button, select, input {
   border: 1px solid #2a2a38;
   color: #fff;
   border-radius: 8px;
-  box-sizing: border-box;
 }
 
+.form-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Кнопки */
 .btn-primary {
   background: var(--accent);
   color: #fff;
   border: none;
-  padding: 10px 16px;
+  padding: 9px 15px;
   border-radius: 8px;
-  font-weight: bold;
+  font-weight: 600;
   cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.btn-secondary {
+  background: #2a2a38;
+  color: #fff;
+  border: none;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.btn-primary:active, .btn-secondary:active {
+  opacity: 0.8;
 }
 
 .btn-journal {
@@ -151,119 +185,12 @@ button, select, input {
   color: #fff;
   border: none;
   font-size: 11px;
-  padding: 4px 8px;
+  padding: 5px 9px;
   border-radius: 6px;
   cursor: pointer;
+  font-weight: 600;
 }
 
-/* Адаптивний блок фільтра дат */
-.filter-card {
-  box-sizing: border-box;
-  width: 100%;
-  overflow: hidden;
-}
-
-.filter-card h4 {
-  margin: 0 0 10px 0;
-  font-size: 14px;
-}
-
-.filter-card .date-inputs {
-  display: flex;
-  flex-wrap: wrap; /* Дозволяє перенос кнопки на новий рядок за потреби */
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.filter-card input {
-  flex: 1 1 110px; /* Гнучка ширина */
-  min-width: 0;
-  padding: 8px 10px;
-  background: #121217;
-  border: 1px solid #2a2a38;
-  color: #fff;
-  border-radius: 8px;
-  text-align: center;
-  font-size: 13px;
-  box-sizing: border-box;
-}
-
-.filter-card span {
-  color: var(--text-muted);
-  font-weight: bold;
-}
-
-.filter-card .btn-primary {
-  flex: 1 1 100%; /* На смартфонах кнопка стає на всю ширину під датами */
-  padding: 10px;
-  border-radius: 8px;
-  font-size: 14px;
-  box-sizing: border-box;
-}
-/* Модальне вікно журналу */
-.modal {
-  display: none;
-  position: fixed;
-  z-index: 100;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.7);
-}
-
-.modal-content {
-  background: var(--card-bg);
-  margin: 15% auto;
-  padding: 18px;
-  border-radius: 12px;
-  width: 90%;
-  max-width: 400px;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.close-btn {
-  font-size: 24px;
-  cursor: pointer;
-}
-
-.student-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid #2a2a38;
-}
-
-.status-select {
-  background: #121217;
-  color: #fff;
-  border: 1px solid #2a2a38;
-  border-radius: 6px;
-  padding: 4px;
-}
-
-.progress-bar {
-  background: #2a2a38;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-  margin-top: 8px;
-}
-
-.progress-bar .fill {
-  background: #2ecc71;
-  height: 100%;
-}
-
-/* Кнопка експорту файлу */
 .btn-download {
   background: #27ae60;
   color: #fff;
@@ -275,8 +202,134 @@ button, select, input {
   cursor: pointer;
   transition: opacity 0.2s;
 }
+
 .btn-download:active {
   opacity: 0.8;
+}
+
+/* Адаптивний блок фільтра дат */
+.filter-card {
+  width: 100%;
+}
+
+.filter-card h4 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+}
+
+.filter-card .date-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.filter-card input {
+  flex: 1 1 100px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: #121217;
+  border: 1px solid #2a2a38;
+  color: #fff;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.filter-card span {
+  color: var(--text-muted);
+  font-weight: bold;
+}
+
+.filter-card .btn-primary {
+  flex: 2 1 110px;
+}
+
+.filter-card .btn-secondary {
+  flex: 1 1 50px;
+}
+
+/* Модальні вікна (єдиний правильний оверлей) */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+.modal-content {
+  background: var(--card-bg);
+  margin: 20% auto;
+  padding: 20px;
+  border-radius: 14px;
+  width: 90%;
+  max-width: 420px;
+  border: 1px solid #323248;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.close-btn {
+  font-size: 26px;
+  line-height: 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* Рядки студентів у журналі та складі групи */
+.students-list {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.student-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid #2a2a38;
+}
+
+.status-select {
+  background: #121217;
+  color: #fff;
+  border: 1px solid #2a2a38;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+/* Прогрес-бари */
+.progress-bar {
+  background: #2a2a38;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress-bar .fill {
+  background: #2ecc71;
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
 }
 
 /* Картка персональної статистики */
@@ -284,7 +337,7 @@ button, select, input {
   display: flex;
   align-items: center;
   justify-content: space-around;
-  padding: 20px 14px;
+  padding: 18px 12px;
   background: linear-gradient(135deg, #1e1e2d 0%, #171722 100%);
   border: 1px solid #323248;
 }
@@ -294,29 +347,30 @@ button, select, input {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 90px;
-  height: 90px;
+  width: 86px;
+  height: 86px;
   border-radius: 50%;
-  border: 3px solid #6c5ce7;
-  background: rgba(108, 92, 231, 0.1);
+  border: 3px solid var(--accent);
+  background: rgba(108, 92, 231, 0.12);
 }
 
 .stat-big-num {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 800;
   color: #a29bfe;
 }
 
 .stat-circle-label {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-muted);
   text-transform: uppercase;
+  margin-top: 2px;
 }
 
 .stat-breakdown {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   font-size: 13px;
 }
 
@@ -340,5 +394,30 @@ button, select, input {
 /* Картка списку студентів у звіті старости */
 .group-student-stat-card {
   margin-bottom: 8px;
-  border-left: 3px solid #6c5ce7;
+  border-left: 3px solid var(--accent);
+}
+
+/* Нижня навігація */
+.bottom-nav {
+  display: flex;
+  background: #15151c;
+  border-top: 1px solid #2a2a38;
+  padding: 4px 0;
+}
+
+.nav-item {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 8px 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.nav-item.active {
+  color: #a29bfe;
+  font-weight: 700;
 }

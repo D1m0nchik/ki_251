@@ -12,6 +12,11 @@ let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
+// Прапорець: чи переглядає користувач власний діапазон дат
+let isCustomDateView = false;
+let activeStartDate = null;
+let activeEndDate = null;
+
 // Автоматична розстановка крапок при введенні дати
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
@@ -87,9 +92,10 @@ async function init() {
     console.error("Init error:", err);
   }
 
+  // Первинне завантаження
   await refreshAllData();
 
-  // Фонове автооновлення кожні 20 секунд
+  // Фонове автооновлення кожні 20 секунд (тихе, без перебивання перегляду)
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
@@ -130,15 +136,24 @@ async function loadSchedule(isBackground = false) {
     return;
   }
 
-  // Якщо в полях фільтра нічого не введено, виводимо поточний робочий тиждень
-  const sdateStr = document.getElementById("filter-sdate")?.value.trim();
-  const edateStr = document.getElementById("filter-edate")?.value.trim();
-  if (!sdateStr && !edateStr) {
+  // ГОЛОВНЕ ВИПРАВЛЕННЯ: якщо користувач вибрав свій діапазон — зберігаємо його перегляд!
+  if (isCustomDateView && activeStartDate && activeEndDate) {
+    renderFilteredSchedule(activeStartDate, activeEndDate);
+  } else {
     showCurrentWeekOnly();
   }
 }
 
 function showCurrentWeekOnly() {
+  isCustomDateView = false;
+  activeStartDate = null;
+  activeEndDate = null;
+
+  const sInput = document.getElementById("filter-sdate");
+  const eInput = document.getElementById("filter-edate");
+  if (sInput) sInput.value = "";
+  if (eInput) eInput.value = "";
+
   const title = document.getElementById("schedule-view-title");
   if (title) title.innerText = "Розклад на цей тиждень";
 
@@ -161,7 +176,7 @@ function showCurrentWeekOnly() {
   renderSchedule(weekLessons.length > 0 ? weekLessons : allScheduleData);
 }
 
-// Завантаження будь-якого періоду (минулі дати підтягуються з сайту деканату)
+// Завантаження розкладу за обраний користувачем діапазон
 async function applyLocalDateFilter() {
   const sdateStr = document.getElementById("filter-sdate").value.trim();
   const edateStr = document.getElementById("filter-edate").value.trim();
@@ -171,49 +186,68 @@ async function applyLocalDateFilter() {
     return;
   }
 
+  const startDate = parseCustomDate(sdateStr);
+  const endDate = parseCustomDate(edateStr);
+
+  if (!startDate || !endDate) {
+    alert("Будь ласка, введіть повні дати формату дд.мм.рррр");
+    return;
+  }
+
+  startDate.setHours(0, 0, 0, 0);
+  endDate.setHours(23, 59, 59, 999);
+
+  // Фіксуємо активний режим перегляду діапазону
+  isCustomDateView = true;
+  activeStartDate = startDate;
+  activeEndDate = endDate;
+
   const container = document.getElementById("schedule-list");
   if (container) {
     container.innerHTML = "<p class='loading'>Отримання розкладу з сервера деканату...</p>";
   }
 
   try {
-    // Підтягуємо діапазон через бекенд без видалення минулих записів журналу
+    // 1. Завантажуємо пари з сайту в базу
     await apiRequest("/api/schedule/fetch_range", "POST", {
       sdate: sdateStr,
       edate: edateStr
     });
 
+    // 2. Отримуємо оновлений розклад з бази
     allScheduleData = await apiRequest("/api/schedule");
 
-    const startDate = parseCustomDate(sdateStr);
-    const endDate = parseCustomDate(edateStr);
-
-    if (startDate) startDate.setHours(0, 0, 0, 0);
-    if (endDate) endDate.setHours(23, 59, 59, 999);
-
-    const filtered = allScheduleData.filter(item => {
-      const itemDate = parseCustomDate(item.date_str);
-      if (!itemDate) return true;
-      if (startDate && itemDate < startDate) return false;
-      if (endDate && itemDate > endDate) return false;
-      return true;
-    });
-
-    const title = document.getElementById("schedule-view-title");
-    if (title) title.innerText = `Розклад: ${sdateStr || '...'} — ${edateStr || '...'}`;
-
-    if (filtered.length === 0) {
-      if (container) {
-        container.innerHTML = `<p class='text-muted'>За період з ${sdateStr} по ${edateStr} занять в університетській системі не знайдено.</p>`;
-      }
-      return;
-    }
-
-    renderSchedule(filtered);
+    // 3. Відображаємо тільки обраний період
+    renderFilteredSchedule(startDate, endDate, sdateStr, edateStr);
   } catch (err) {
     alert("Не вдалося завантажити розклад: " + err.message);
     showCurrentWeekOnly();
   }
+}
+
+function renderFilteredSchedule(startDate, endDate, sdateStr = "", edateStr = "") {
+  const container = document.getElementById("schedule-list");
+  if (!container) return;
+
+  const filtered = allScheduleData.filter(item => {
+    const itemDate = parseCustomDate(item.date_str);
+    if (!itemDate) return false;
+    return itemDate >= startDate && itemDate <= endDate;
+  });
+
+  const title = document.getElementById("schedule-view-title");
+  if (title) {
+    const sText = sdateStr || startDate.toLocaleDateString("uk-UA");
+    const eText = edateStr || endDate.toLocaleDateString("uk-UA");
+    title.innerText = `Розклад: ${sText} — ${eText}`;
+  }
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<p class='text-muted'>За обраний період занять в системі університету не знайдено.</p>`;
+    return;
+  }
+
+  renderSchedule(filtered);
 }
 
 function switchStarostaViewSubgroup(subgroup, btn) {
@@ -221,10 +255,8 @@ function switchStarostaViewSubgroup(subgroup, btn) {
   document.querySelectorAll(".sg-btn").forEach(b => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
   
-  const sdate = document.getElementById("filter-sdate").value.trim();
-  const edate = document.getElementById("filter-edate").value.trim();
-  if (sdate || edate) {
-    applyLocalDateFilter();
+  if (isCustomDateView && activeStartDate && activeEndDate) {
+    renderFilteredSchedule(activeStartDate, activeEndDate);
   } else {
     showCurrentWeekOnly();
   }

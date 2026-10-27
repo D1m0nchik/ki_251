@@ -10,10 +10,11 @@ let currentUser = null;
 let currentActiveLessonId = null;
 let attendanceState = {};
 let allScheduleData = [];
+let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
-// Автоматична розстановка крапок: вводиш 01112026 -> стає 01.11.2026
+// Автоматична розстановка крапок при введенні дати
 function maskDateInput(input) {
-  let v = input.value.replace(/\D/g, ""); // тільки цифри
+  let v = input.value.replace(/\D/g, "");
   if (v.length > 8) v = v.substring(0, 8);
   
   let formatted = "";
@@ -58,6 +59,9 @@ async function init() {
       const broadcastPanel = document.getElementById("starosta-broadcast-panel");
       if (broadcastPanel) broadcastPanel.style.display = "block";
 
+      const subgroupSwitcher = document.getElementById("starosta-subgroup-switcher");
+      if (subgroupSwitcher) subgroupSwitcher.style.display = "flex";
+
       const navGroupBtn = document.getElementById("nav-group-btn");
       if (navGroupBtn) navGroupBtn.style.display = "flex";
 
@@ -101,7 +105,6 @@ async function refreshAllData(isBackground = false) {
   }
 }
 
-// Завантаження розкладу (за замовчуванням виводиться поточний тиждень)
 async function loadSchedule(isBackground = false) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -112,13 +115,11 @@ async function loadSchedule(isBackground = false) {
 
   allScheduleData = await apiRequest("/api/schedule");
   
-  // Якщо в базі порожньо — робимо перший фоновий сінк на місяць
   if (!allScheduleData || allScheduleData.length === 0) {
     await syncFullMonth();
     return;
   }
 
-  // За замовчуванням відображаємо тільки поточний тиждень
   showCurrentWeekOnly();
 }
 
@@ -129,13 +130,12 @@ function parseCustomDate(str) {
   return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
 }
 
-// Фільтр розкладу суто на поточний робочий тиждень (понеділок-неділя)
 function showCurrentWeekOnly() {
   const title = document.getElementById("schedule-view-title");
   if (title) title.innerText = "Розклад на цей тиждень";
 
   const now = new Date();
-  const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay(); // 1 - Пн, 7 - Нд
+  const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
   
   const monday = new Date(now);
   monday.setDate(now.getDate() - (dayOfWeek - 1));
@@ -153,7 +153,6 @@ function showCurrentWeekOnly() {
   renderSchedule(weekLessons.length > 0 ? weekLessons : allScheduleData);
 }
 
-// Локальний фільтр за датами зі збереженого місяця
 function applyLocalDateFilter() {
   const sdateStr = document.getElementById("filter-sdate").value.trim();
   const edateStr = document.getElementById("filter-edate").value.trim();
@@ -180,7 +179,13 @@ function applyLocalDateFilter() {
   renderSchedule(filtered);
 }
 
-// Завантаження розкладу на місяць уперед в базу даних (захист від збоїв сайту)
+function switchStarostaViewSubgroup(subgroup, btn) {
+  selectedSubgroupFilter = subgroup;
+  document.querySelectorAll(".sg-btn").forEach(b => b.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+  applyLocalDateFilter();
+}
+
 async function syncFullMonth() {
   const container = document.getElementById("schedule-list");
   if (container) container.innerHTML = "<p class='loading'>🔄 Кешування розкладу на місяць вперед...</p>";
@@ -202,13 +207,18 @@ function renderSchedule(lessonsList) {
   if (!container) return;
   container.innerHTML = "";
 
-  if (!lessonsList || lessonsList.length === 0) {
+  let visibleLessons = lessonsList;
+  if (currentUser && currentUser.role === "starosta" && selectedSubgroupFilter !== 0) {
+    visibleLessons = lessonsList.filter(l => l.target_subgroup === 0 || l.target_subgroup === selectedSubgroupFilter);
+  }
+
+  if (!visibleLessons || visibleLessons.length === 0) {
     container.innerHTML = "<p class='text-muted'>Занять на обрані дні не знайдено.</p>";
     return;
   }
 
   const groupedByDay = {};
-  lessonsList.forEach(item => {
+  visibleLessons.forEach(item => {
     const dayKey = `${item.date_str} ${item.day_of_week}`;
     if (!groupedByDay[dayKey]) groupedByDay[dayKey] = [];
     groupedByDay[dayKey].push(item);
@@ -237,10 +247,16 @@ function renderSchedule(lessonsList) {
         ? `<button class="btn-journal" onclick="openAttendanceModal(${item.id}, '${item.subject.replace(/'/g, "\\'")}')">📝 Журнал</button>`
         : "";
 
+      let sgTag = "";
+      if (currentUser && currentUser.role === "starosta") {
+        if (item.target_subgroup === 1) sgTag = `<span style="font-size: 11px; background: rgba(108, 92, 231, 0.2); color: #a29bfe; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">1 підгр.</span>`;
+        else if (item.target_subgroup === 2) sgTag = `<span style="font-size: 11px; background: rgba(243, 156, 18, 0.2); color: #f39c12; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">2 підгр.</span>`;
+      }
+
       card.innerHTML = `
         ${replacementHtml}
         <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h4 style="margin:0 0 6px 0;">${item.lesson_number} пара (${item.time_start} - ${item.time_end})</h4>
+          <h4 style="margin:0 0 6px 0;">${item.lesson_number} пара (${item.time_start} - ${item.time_end}) ${sgTag}</h4>
           ${starostaBtn}
         </div>
         <p style="margin:0 0 4px 0;"><strong>${item.subject}</strong> (${item.lesson_type})</p>
@@ -255,7 +271,6 @@ function renderSchedule(lessonsList) {
   }
 }
 
-// 5. Оновлена персональна статистика з багатоколірним Conic-Gradient кільцем
 async function loadMyStats() {
   try {
     const data = await apiRequest("/api/my_stats");
@@ -274,7 +289,6 @@ async function loadMyStats() {
     document.getElementById("stat-late").innerText = late;
     document.getElementById("stat-exc").innerText = excused;
 
-    // Побудова градієнта для кільця
     const ring = document.getElementById("stat-multicolor-ring");
     if (ring) {
       if (total === 0) {
@@ -284,7 +298,6 @@ async function loadMyStats() {
         const absDeg = presDeg + (absent / total) * 360;
         const lateDeg = absDeg + (late / total) * 360;
 
-        // Кольорові сектори: зелений (був), червоний (пропуск), помаранчевий (запізнення), синій (поважна)
         ring.style.background = `conic-gradient(
           #2ecc71 0deg ${presDeg}deg,
           #ff4757 ${presDeg}deg ${absDeg}deg,
@@ -332,7 +345,6 @@ async function loadMyStats() {
   }
 }
 
-// Завантаження журналу відвідуваності на пару
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -393,7 +405,6 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
-// Загальний журнал групи для старости
 async function loadGroupStats() {
   const container = document.getElementById("group-stats-table-container");
   if (!container) return;
@@ -435,7 +446,6 @@ async function loadGroupStats() {
   }
 }
 
-// Експорт файлу в Excel
 async function downloadAttendanceReport() {
   const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "";
   try {
@@ -458,7 +468,6 @@ async function downloadAttendanceReport() {
   }
 }
 
-// Завантаження оголошень
 async function loadAnnouncements() {
   const container = document.getElementById("announcements-list");
   if (!container) return;
@@ -489,7 +498,6 @@ async function loadAnnouncements() {
   }
 }
 
-// Розсилка повідомлень
 async function sendBroadcastMessage() {
   const title = document.getElementById("broadcast-title").value.trim();
   const message = document.getElementById("broadcast-body").value.trim();
@@ -506,7 +514,6 @@ async function sendBroadcastMessage() {
   await loadAnnouncements();
 }
 
-// Управління підгрупами
 async function loadGroupManagement() {
   try {
     const students = await apiRequest("/api/group/students");

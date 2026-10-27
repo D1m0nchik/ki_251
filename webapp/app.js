@@ -12,7 +12,7 @@ let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
-// Автоматична розстановка крапок при введенні дати
+// Автоматична розстановка крапок при введенні
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
   if (v.length > 8) v = v.substring(0, 8);
@@ -153,7 +153,8 @@ function showCurrentWeekOnly() {
   renderSchedule(weekLessons.length > 0 ? weekLessons : allScheduleData);
 }
 
-function applyLocalDateFilter() {
+// Завантаження будь-якого періоду (минулі дати підтягуються з сайту деканату)
+async function applyLocalDateFilter() {
   const sdateStr = document.getElementById("filter-sdate").value.trim();
   const edateStr = document.getElementById("filter-edate").value.trim();
 
@@ -162,28 +163,53 @@ function applyLocalDateFilter() {
     return;
   }
 
-  const startDate = parseCustomDate(sdateStr);
-  const endDate = parseCustomDate(edateStr);
+  const container = document.getElementById("schedule-list");
+  if (container) {
+    container.innerHTML = "<p class='loading'>Завантаження розкладу за вказані дати...</p>";
+  }
 
-  const filtered = allScheduleData.filter(item => {
-    const itemDate = parseCustomDate(item.date_str);
-    if (!itemDate) return true;
-    if (startDate && itemDate < startDate) return false;
-    if (endDate && itemDate > endDate) return false;
-    return true;
-  });
+  try {
+    // Підтягуємо діапазон через бекенд без видалення минулих записів журналу
+    await apiRequest("/api/schedule/fetch_range", "POST", {
+      sdate: sdateStr,
+      edate: edateStr
+    });
 
-  const title = document.getElementById("schedule-view-title");
-  if (title) title.innerText = `Розклад: ${sdateStr || '...'} — ${edateStr || '...'}`;
+    allScheduleData = await apiRequest("/api/schedule");
 
-  renderSchedule(filtered);
+    const startDate = parseCustomDate(sdateStr);
+    const endDate = parseCustomDate(edateStr);
+
+    const filtered = allScheduleData.filter(item => {
+      const itemDate = parseCustomDate(item.date_str);
+      if (!itemDate) return true;
+      if (startDate && itemDate < startDate) return false;
+      if (endDate && itemDate > endDate) return false;
+      return true;
+    });
+
+    const title = document.getElementById("schedule-view-title");
+    if (title) title.innerText = `Розклад: ${sdateStr || '...'} — ${edateStr || '...'}`;
+
+    renderSchedule(filtered);
+  } catch (err) {
+    alert("Помилка завантаження діапазону: " + err.message);
+    showCurrentWeekOnly();
+  }
 }
 
 function switchStarostaViewSubgroup(subgroup, btn) {
   selectedSubgroupFilter = subgroup;
   document.querySelectorAll(".sg-btn").forEach(b => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
-  applyLocalDateFilter();
+  
+  const sdate = document.getElementById("filter-sdate").value.trim();
+  const edate = document.getElementById("filter-edate").value.trim();
+  if (sdate || edate) {
+    applyLocalDateFilter();
+  } else {
+    showCurrentWeekOnly();
+  }
 }
 
 async function syncFullMonth() {

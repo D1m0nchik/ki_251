@@ -12,7 +12,7 @@ let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
-// Автоматична розстановка крапок при введенні
+// Автоматична розстановка крапок при введенні дати
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
   if (v.length > 8) v = v.substring(0, 8);
@@ -26,6 +26,14 @@ function maskDateInput(input) {
     formatted = v;
   }
   input.value = formatted;
+}
+
+// Надійне вилучення дати формату DD.MM.YYYY
+function parseCustomDate(str) {
+  if (!str) return null;
+  const match = str.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+  if (!match) return null;
+  return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1]));
 }
 
 async function apiRequest(endpoint, method = "GET", body = null) {
@@ -81,10 +89,12 @@ async function init() {
 
   await refreshAllData();
 
+  // Фонове автооновлення кожні 20 секунд
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
 
+  // Оновлення при поверненні у додаток
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       refreshAllData(true);
@@ -120,14 +130,12 @@ async function loadSchedule(isBackground = false) {
     return;
   }
 
-  showCurrentWeekOnly();
-}
-
-function parseCustomDate(str) {
-  if (!str) return null;
-  const parts = str.trim().split(".");
-  if (parts.length < 3) return null;
-  return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+  // Якщо в полях фільтра нічого не введено, виводимо поточний робочий тиждень
+  const sdateStr = document.getElementById("filter-sdate")?.value.trim();
+  const edateStr = document.getElementById("filter-edate")?.value.trim();
+  if (!sdateStr && !edateStr) {
+    showCurrentWeekOnly();
+  }
 }
 
 function showCurrentWeekOnly() {
@@ -165,7 +173,7 @@ async function applyLocalDateFilter() {
 
   const container = document.getElementById("schedule-list");
   if (container) {
-    container.innerHTML = "<p class='loading'>Завантаження розкладу за вказані дати...</p>";
+    container.innerHTML = "<p class='loading'>Отримання розкладу з сервера деканату...</p>";
   }
 
   try {
@@ -180,6 +188,9 @@ async function applyLocalDateFilter() {
     const startDate = parseCustomDate(sdateStr);
     const endDate = parseCustomDate(edateStr);
 
+    if (startDate) startDate.setHours(0, 0, 0, 0);
+    if (endDate) endDate.setHours(23, 59, 59, 999);
+
     const filtered = allScheduleData.filter(item => {
       const itemDate = parseCustomDate(item.date_str);
       if (!itemDate) return true;
@@ -191,9 +202,16 @@ async function applyLocalDateFilter() {
     const title = document.getElementById("schedule-view-title");
     if (title) title.innerText = `Розклад: ${sdateStr || '...'} — ${edateStr || '...'}`;
 
+    if (filtered.length === 0) {
+      if (container) {
+        container.innerHTML = `<p class='text-muted'>За період з ${sdateStr} по ${edateStr} занять в університетській системі не знайдено.</p>`;
+      }
+      return;
+    }
+
     renderSchedule(filtered);
   } catch (err) {
-    alert("Помилка завантаження діапазону: " + err.message);
+    alert("Не вдалося завантажити розклад: " + err.message);
     showCurrentWeekOnly();
   }
 }
@@ -297,6 +315,7 @@ function renderSchedule(lessonsList) {
   }
 }
 
+// Персональна статистика з кільцевою діаграмою
 async function loadMyStats() {
   try {
     const data = await apiRequest("/api/my_stats");
@@ -371,6 +390,7 @@ async function loadMyStats() {
   }
 }
 
+// Завантаження журналу відвідуваності на конкретну пару
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -431,6 +451,7 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
+// Зведена статистика групи (тільки для старости)
 async function loadGroupStats() {
   const container = document.getElementById("group-stats-table-container");
   if (!container) return;

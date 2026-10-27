@@ -447,3 +447,50 @@ button, select, input, textarea {
   background: rgba(255, 255, 255, 0.05);
   transform: scale(0.96);
 }
+/* Багатокольорове кільце відвідуваності */
+.stat-ring-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stat-multicolor-ring {
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  /* Фоновий дефолтний градієнт, який змінюється динамічно через JS */
+  background: conic-gradient(#2ecc71 0deg 360deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  transition: background 0.4s ease;
+}
+
+.stat-inner-circle {
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  background: #181822;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-sync {
+  background: #232332;
+  color: #a29bfe;
+  border: 1px solid #3b3b52;
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.btn-sync:active {
+  transform: scale(0.95);
+  background: #2f2f44;
+}

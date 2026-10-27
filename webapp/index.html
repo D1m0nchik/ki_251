@@ -22,13 +22,15 @@
     <main class="content">
       <!-- 1. Вкладка Розклад -->
       <section id="tab-schedule" class="tab-pane active">
-        <div id="starosta-date-filter" class="card filter-card" style="display: none;">
-          <h4>Задати період розкладу:</h4>
+        <!-- Локальний фільтр за датами для кожного користувача -->
+        <div class="card filter-card">
+          <h4>Фільтр за датами:</h4>
           <div class="date-inputs">
             <input type="text" id="filter-sdate" placeholder="01.11.2026" maxlength="10">
             <span>—</span>
             <input type="text" id="filter-edate" placeholder="15.11.2026" maxlength="10">
-            <button class="btn-primary" onclick="submitCustomDateRange()">Оновити</button>
+            <button class="btn-primary" onclick="applyLocalDateFilter()">Фільтрувати</button>
+            <button class="btn-secondary" onclick="document.getElementById('filter-sdate').value=''; document.getElementById('filter-edate').value=''; applyLocalDateFilter();">Всі</button>
           </div>
         </div>
 
@@ -74,7 +76,6 @@
       <section id="tab-stats" class="tab-pane">
         <h3 class="section-title">Моя успішність і відвідування</h3>
         
-        <!-- Головна картка студента -->
         <div class="card stat-hero-card">
           <div class="stat-circle-box">
             <span id="stat-percent" class="stat-big-num">0%</span>

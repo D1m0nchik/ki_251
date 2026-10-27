@@ -24,8 +24,6 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("DELETE FROM schedule")
-
             for day_block in day_blocks:
                 h4 = day_block.find('h4')
                 if not h4:
@@ -50,14 +48,12 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                     if not cell_raw_text:
                         continue
 
-                    # 1. Пошук та точне виділення заміни
                     is_replacement = False
                     replacement_note = None
                     rep_teacher = None
 
                     if "заміна!" in cell_raw_text.lower():
                         is_replacement = True
-                        # Шукаємо "Увага! Заміна! <новий> замість: <старий з посадою>"
                         match = re.search(
                             r'Увага!\s*Заміна!\s*(.*?)\s+замість:\s*(.*?)(?=\s+(?:Потік|1\.|\d\.|[А-ЯІЇЄ][а-яіїє]+(?:\s+[А-ЯІЇЄ][а-яіїє]+)?\s*\([ЛлПпЛл]\)|Вища|Об|Системне|Фізичне)|$)',
                             cell_raw_text,
@@ -66,20 +62,17 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                         if match:
                             rep_teacher = match.group(1).strip()
                             old_teacher = match.group(2).strip()
-                            # Очищаємо назву предмета, якщо вона потрапила в хвіст ПІБ
                             old_teacher = re.split(r'\s+(?:Вища|Об`|Системне|Іноземна|Комп)', old_teacher)[0]
                             replacement_note = f"Заміна: {rep_teacher} замість {old_teacher}"
                         else:
                             replacement_note = "Увага! Заміна викладача"
 
-                    # 2. Знаходження предметів
                     p_names = cell.find_all('span', class_='p_name')
                     if not p_names:
                         p_names = [cell]
 
                     for p_name_span in p_names:
                         subject = p_name_span.get_text(strip=True) if hasattr(p_name_span, 'get_text') else str(p_name_span)
-                        # Очищаємо заголовок заміни з назви дисципліни
                         subject = re.sub(r'Увага!\s*Заміна!.*?(замість:.*?)?(?=[А-ЯІЇЄ]|$)', '', subject, flags=re.IGNORECASE).strip()
                         if not subject or "Увага!" in subject:
                             subject = "Дисципліна за розкладом"
@@ -115,12 +108,23 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                         elif re.search(r'\(?підгр\.?\s*2\)?', full_check, re.IGNORECASE):
                             target_subgroup = 2
 
+                        # Зберігаємо та оновлюємо без видалення schedule_id!
                         await conn.execute("""
                             INSERT INTO schedule (
                                 date_str, day_of_week, lesson_number, time_start, time_end,
                                 subject, lesson_type, teacher, room, target_subgroup,
                                 is_replacement, replacement_note
                             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                            ON CONFLICT (date_str, lesson_number, subject, target_subgroup) 
+                            DO UPDATE SET 
+                                day_of_week = EXCLUDED.day_of_week,
+                                time_start = EXCLUDED.time_start,
+                                time_end = EXCLUDED.time_end,
+                                lesson_type = EXCLUDED.lesson_type,
+                                teacher = EXCLUDED.teacher,
+                                room = EXCLUDED.room,
+                                is_replacement = EXCLUDED.is_replacement,
+                                replacement_note = EXCLUDED.replacement_note
                         """, date_str, day_of_week, lesson_num, time_start, time_end,
                              subject, lesson_type, teacher, room, target_subgroup,
                              is_replacement, replacement_note)

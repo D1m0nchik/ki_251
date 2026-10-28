@@ -26,7 +26,6 @@ body {
   justify-content: center;
 }
 
-/* Головний контейнер з правильними боковими відступами */
 .app-container {
   width: 100%;
   max-width: 500px;
@@ -34,10 +33,9 @@ body {
   display: flex;
   flex-direction: column;
   position: relative;
-  padding: 16px 16px 85px 16px; /* 85px знизу щоб контент не перекривався нижнім меню */
+  padding: 16px 16px 85px 16px;
 }
 
-/* Верхній бар */
 .app-header {
   display: flex;
   justify-content: space-between;
@@ -73,7 +71,6 @@ body {
   cursor: pointer;
 }
 
-/* Вкладки */
 .tab-pane {
   display: none;
   width: 100%;
@@ -83,7 +80,6 @@ body {
   display: block;
 }
 
-/* Картки та форми */
 .card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
@@ -165,7 +161,6 @@ body {
   white-space: nowrap;
 }
 
-/* Перемикач підгруп */
 .subgroup-switcher {
   display: flex;
   background: #171822;
@@ -193,7 +188,6 @@ body {
   color: #fff;
 }
 
-/* Розклад */
 .day-header {
   font-size: 16px;
   font-weight: 800;
@@ -217,7 +211,7 @@ body {
   cursor: pointer;
 }
 
-/* НИЖНЯ НАВІГАЦІЯ: НАДІЙНО ЗАКРІПЛЕНА ВНИЗУ */
+/* Нижнє закріплене меню */
 .bottom-nav {
   position: fixed;
   bottom: 0;
@@ -259,9 +253,122 @@ body {
   color: var(--primary);
 }
 
-/* Загальні елементи */
 .loading {
   text-align: center;
   color: var(--text-muted);
   padding: 30px 0;
+}
+
+/* --- СТИЛІ ВКЛАДКИ «УСПІШНІСТЬ» --- */
+.stats-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 20px 16px;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.stat-ring-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.circular-chart {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: conic-gradient(#2ecc71 0deg 360deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.inner-circle {
+  width: 82px;
+  height: 82px;
+  background-color: var(--card-bg);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.inner-circle span {
+  font-size: 22px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.stat-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.stat-item strong {
+  margin-left: auto;
+  color: #ffffff;
+  font-size: 14px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.dot.pres {
+  background-color: #2ecc71;
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.4);
+}
+
+.dot.abs {
+  background-color: #ff4757;
+  box-shadow: 0 0 8px rgba(255, 71, 87, 0.4);
+}
+
+.dot.late {
+  background-color: #ffa502;
+  box-shadow: 0 0 8px rgba(255, 165, 2, 0.4);
+}
+
+.dot.exc {
+  background-color: #1e90ff;
+  box-shadow: 0 0 8px rgba(30, 144, 255, 0.4);
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background-color: #252637;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+
+.progress-bar .fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+#tab-stats h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 18px 0 12px 0;
 }

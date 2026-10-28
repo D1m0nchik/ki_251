@@ -26,12 +26,12 @@
         <div class="card filter-card">
           <h4>Отримати розклад за період:</h4>
           <div class="date-inputs">
-            <input type="text" id="filter-sdate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
-            <span>—</span>
-            <input type="text" id="filter-edate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
-            <button class="btn-primary" onclick="applyLocalDateFilter()">Показати</button>
-            <button class="btn-secondary" onclick="document.getElementById('filter-sdate').value=''; document.getElementById('filter-edate').value=''; showCurrentWeekOnly();">Цей тиждень</button>
-          </div>
+  <input type="text" id="filter-sdate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
+  <span>—</span>
+  <input type="text" id="filter-edate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
+  <button class="btn-primary" onclick="applyLocalDateFilter()">Показати</button>
+  <button class="btn-secondary" onclick="showDefaultScheduleFromToday()">Сьогодні / Цей тиждень</button>
+</div>
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin: 14px 0 8px 0;">

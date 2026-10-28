@@ -58,14 +58,34 @@
         <div id="group-students-list" class="students-list"></div>
       </section>
 
-      <!-- 3. Вкладка Статистика групи (тільки для старости) -->
+      <!-- 3. Вкладка Статистика групи (для старости) -->
       <section id="tab-group-stats" class="tab-pane">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-          <h3 class="section-title" style="margin: 0;">Журнал групи</h3>
-          <button class="btn-download" onclick="downloadAttendanceReport()">📥 Експорт в Excel</button>
+        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+          <h2 class="stats-screen-title">Прогули</h2>
+          <button class="btn-download" onclick="downloadAttendanceReport()">📥 Excel</button>
         </div>
-        <p class="text-muted" style="font-size: 13px;">Загальний рейтинг відвідуваності студентів КІ-25-1:</p>
-        <div id="group-stats-table-container"></div>
+        <p class="stats-screen-subtitle">Поріг 3 пропуски з дисципліни</p>
+
+        <!-- 3 метричні картки зверху -->
+        <div class="metrics-grid">
+          <div class="metric-card risk-card">
+            <span class="metric-val" id="metric-risk-count">0</span>
+            <span class="metric-lbl">в групі ризику</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-val" id="metric-students-count">0</span>
+            <span class="metric-lbl">студентів</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-val" id="metric-lessons-total">0</span>
+            <span class="metric-lbl">пар всього</span>
+          </div>
+        </div>
+
+        <!-- Список студентів з багатоколірними барами -->
+        <div id="group-stats-table-container" class="risk-students-list">
+          <p class="loading">Завантаження аналітики...</p>
+        </div>
       </section>
 
       <!-- 4. Вкладка Оголошення -->

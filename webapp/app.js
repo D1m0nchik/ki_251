@@ -31,12 +31,13 @@ function maskDateInput(input) {
   input.value = formatted;
 }
 
-// Надійне вилучення дати формату DD.MM.YYYY
+// Надійне вилучення дати з рядка з очищенням годин (початок доби 00:00:00)
 function parseCustomDate(str) {
   if (!str) return null;
   const match = str.match(/(\d{2})\.(\d{2})\.(\d{4})/);
   if (!match) return null;
-  return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1]));
+  // Створюємо дату в локальному часі з нульовим часом
+  return new Date(parseInt(match[3], 10), parseInt(match[2], 10) - 1, parseInt(match[1], 10), 0, 0, 0, 0);
 }
 
 async function apiRequest(endpoint, method = "GET", body = null) {
@@ -141,7 +142,7 @@ async function loadSchedule(isBackground = false) {
   }
 }
 
-// Основний режим: розклад починаючи з сьогодні і до кінця тижня
+// Основний режим: чітко з поточної календарної доби (сьогодні)
 function showDefaultScheduleFromToday() {
   activeSearchRange = null;
 
@@ -153,36 +154,38 @@ function showDefaultScheduleFromToday() {
   const title = document.getElementById("schedule-view-title");
   if (title) title.innerText = "Розклад: на сьогодні та найближчі дні";
 
+  // Сьогоднішня дата строго в 00:00:00:000 за локальним часом пристрою
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
-  // Кінець тижня (неділя 23:59:59)
-  const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
-  const daysUntilSunday = 7 - dayOfWeek;
+  // Визначаємо кінець поточного тижня (неділя 23:59:59)
+  const currentDay = now.getDay(); // 0 - неділя, 1 - понеділок...
+  const daysUntilSunday = currentDay === 0 ? 0 : 7 - currentDay;
   
   const sunday = new Date(today);
   sunday.setDate(today.getDate() + daysUntilSunday);
   sunday.setHours(23, 59, 59, 999);
 
-  // Фільтруємо: ТІЛЬКИ починаючи з сьогодні (минулі дні цього тижня відкидаються)
+  // Фільтруємо: СУВОРО пари, дата яких >= сьогодні
   let upcomingLessons = allScheduleData.filter(item => {
     const d = parseCustomDate(item.date_str);
-    return d && d >= today && d <= sunday;
+    return d && d.getTime() >= today.getTime() && d.getTime() <= sunday.getTime();
   });
 
-  // Якщо сьогодні вихідний (або всі пари на цей тиждень пройшли), показуємо наступні 7 днів
+  // Якщо на залишок тижня занять немає (наприклад, п'ятниця вечір чи вихідні),
+  // показуємо наступні 7 днів вперед починаючи від сьогодні
   if (upcomingLessons.length === 0) {
-    const nextWeekLimit = new Date(today);
-    nextWeekLimit.setDate(today.getDate() + 7);
-    nextWeekLimit.setHours(23, 59, 59, 999);
+    const nextLimit = new Date(today);
+    nextLimit.setDate(today.getDate() + 7);
+    nextLimit.setHours(23, 59, 59, 999);
 
     upcomingLessons = allScheduleData.filter(item => {
       const d = parseCustomDate(item.date_str);
-      return d && d >= today && d <= nextWeekLimit;
+      return d && d.getTime() >= today.getTime() && d.getTime() <= nextLimit.getTime();
     });
   }
 
-  renderSchedule(upcomingLessons.length > 0 ? upcomingLessons : allScheduleData);
+  renderSchedule(upcomingLessons);
 }
 
 // Запит користувача: стає пріоритетним поверх основного розкладу

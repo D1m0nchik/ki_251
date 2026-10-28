@@ -10,9 +10,18 @@ HEADERS = {
     "Referer": "https://dekanat.nung.edu.ua/cgi-bin/timetable.cgi?n=700"
 }
 
+def determine_subgroup(text: str) -> int:
+    """Визначає підгрупу суто для конкретного фрагмента заняття."""
+    low = text.lower()
+    # Перевірка 1 підгрупи
+    if re.search(r"(?:підгр\.?|п\.?|підгрупа)\s*1\b|\b1\s*(?:підгр|підгрупа|п\.)", low):
+        return 1
+    # Перевірка 2 підгрупи
+    if re.search(r"(?:підгр\.?|п\.?|підгрупа)\s*2\b|\b2\s*(?:підгр|підгрупа|п\.)", low):
+        return 2
+    return 0
+
 async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
-    # Байт-код для 'КІ-25-1' у CP1251: \xca\xb2-25-1
-    # Складаємо payload вручну у CP1251:
     group_encoded = "%CA%B2-25-1"
     payload = f"faculty=1015&teacher=&course=0&group={group_encoded}&sdate={sdate.strip()}&edate={edate.strip()}&n=700"
 
@@ -55,69 +64,68 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                     time_end = times[1] if len(times) > 1 else ""
 
                     cell = cols[2]
-                    cell_raw_text = cell.get_text(" ", strip=True)
-                    if not cell_raw_text:
+                    p_names = cell.find_all("span", class_="p_name")
+
+                    # Якщо span.p_name відсутні, обробляємо комірку як один блок
+                    if not p_names:
+                        cell_raw = cell.get_text(" ", strip=True)
+                        if not cell_raw:
+                            continue
+                        subgroup = determine_subgroup(cell_raw)
+                        await conn.execute("""
+                            INSERT INTO schedule (
+                                date_str, day_of_week, lesson_number, time_start, time_end,
+                                subject, lesson_type, teacher, room, target_subgroup,
+                                is_replacement, replacement_note
+                            ) VALUES ($1, $2, $3, $4, $5, $6, '', '', '', $7, false, null)
+                            ON CONFLICT (date_str, lesson_number, subject, target_subgroup) DO NOTHING
+                        """, date_str, day_of_week, lesson_num, time_start, time_end, cell_raw, subgroup)
                         continue
 
-                    is_replacement = False
-                    replacement_note = None
-                    rep_teacher = None
-
-                    if "заміна!" in cell_raw_text.lower():
-                        is_replacement = True
-                        match = re.search(
-                            r"Увага!\s*Заміна!\s*(.*?)\s+замість:\s*(.*?)(?=\s+(?:Потік|1\.|\d\.|[А-ЯІЇЄ][а-яіїє]+(?:\s+[А-ЯІЇЄ][а-яіїє]+)?\s*\([ЛлПпЛл]\)|Вища|Об|Системне|Фізичне)|$)",
-                            cell_raw_text,
-                            re.IGNORECASE
-                        )
-                        if match:
-                            rep_teacher = match.group(1).strip()
-                            old_teacher = match.group(2).strip()
-                            old_teacher = re.split(r"\s+(?:Вища|Об`|Системне|Іноземна|Комп)", old_teacher)[0]
-                            replacement_note = f"Заміна: {rep_teacher} замість {old_teacher}"
-                        else:
-                            replacement_note = "Увага! Заміна викладача"
-
-                    p_names = cell.find_all("span", class_="p_name")
-                    if not p_names:
-                        p_names = [cell]
-
+                    # Якщо в одній парі кілька дисциплін/підгруп — збираємо кожен блок ізольовано
                     for p_name_span in p_names:
-                        subject = p_name_span.get_text(strip=True) if hasattr(p_name_span, "get_text") else str(p_name_span)
+                        subject = p_name_span.get_text(strip=True)
                         subject = re.sub(r"Увага!\s*Заміна!.*?(замість:.*?)?(?=[А-ЯІЇЄ]|$)", "", subject, flags=re.IGNORECASE).strip()
                         if not subject or "Увага!" in subject:
                             subject = "Дисципліна за розкладом"
 
-                        curr = p_name_span
                         lesson_type = ""
-                        subgroup_info = ""
                         teacher = ""
                         room = ""
+                        subgroup_text_acc = []
 
-                        while curr and hasattr(curr, "next_sibling") and curr.next_sibling:
-                            curr = curr.next_sibling
+                        curr = p_name_span.next_sibling
+                        while curr:
+                            # Якщо дійшли до наступного предмета у цій же клітинці — зупиняємось
+                            if getattr(curr, "name", None) == "span" and "p_name" in curr.get("class", []):
+                                break
+
                             if getattr(curr, "name", None) == "span":
                                 classes = curr.get("class", [])
-                                if "p_name" in classes:
-                                    break
-                                elif "p_type_name" in classes:
-                                    lesson_type = curr.get_text(strip=True)
-                                elif "gr2_name" in classes:
-                                    subgroup_info = curr.get_text(strip=True)
+                                txt = curr.get_text(strip=True)
+                                if "p_type_name" in classes:
+                                    lesson_type = txt
                                 elif "t_name" in classes:
-                                    teacher = curr.get_text(strip=True)
+                                    teacher = txt
                                 elif "room_name" in classes:
-                                    room = curr.get_text(strip=True)
+                                    room = txt
+                                elif "gr2_name" in classes:
+                                    subgroup_text_acc.append(txt)
+                            elif isinstance(curr, str):
+                                subgroup_text_acc.append(curr)
 
-                        if is_replacement and rep_teacher:
-                            teacher = rep_teacher
+                            curr = curr.next_sibling
 
-                        target_subgroup = 0
-                        full_check = f"{subgroup_info} {cell_raw_text}"
-                        if re.search(r"\(?підгр\.?\s*1\)?", full_check, re.IGNORECASE):
-                            target_subgroup = 1
-                        elif re.search(r"\(?підгр\.?\s*2\)?", full_check, re.IGNORECASE):
-                            target_subgroup = 2
+                        # Визначаємо підгрупу СУВОРО для цієї частини клітинки
+                        combined_sub_text = " ".join(subgroup_text_acc)
+                        target_subgroup = determine_subgroup(combined_sub_text)
+
+                        # Перевірка на заміну для цього блоку
+                        is_replacement = False
+                        replacement_note = None
+                        if "заміна!" in combined_sub_text.lower() or "заміна!" in subject.lower():
+                            is_replacement = True
+                            replacement_note = "Увага! Заміна викладача"
 
                         await conn.execute("""
                             INSERT INTO schedule (

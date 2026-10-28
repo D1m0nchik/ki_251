@@ -150,7 +150,7 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
 
-        # 1. Пріоритетний діапазон пошуку (якщо користувач обрав період вручну)
+        # 1. Якщо користувач обрав період через фільтр вручну
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -174,31 +174,25 @@ async def get_schedule(
                 rows = await conn.fetch(query, subgroup, s_clean, e_clean)
             return [dict(r) for r in rows]
 
-        # 2. Дефолтний режим: обчислюємо дату за Києвом (ігноруючи UTC бази)
-        now_kyiv = datetime.now(KYIV_TZ).date()
-        days_to_sunday = 6 - now_kyiv.weekday()
-        sunday_kyiv = now_kyiv + timedelta(days=days_to_sunday)
-
-        today_str = now_kyiv.strftime("%d.%m.%Y")
-        sunday_str = sunday_kyiv.strftime("%d.%m.%Y")
-
+        # 2. Дефолтний режим: від СЬОГОДНІ до КІНЦЯ ТИЖНЯ (неділі)
+        # Визначаємо київський час прямо в SQL (ідеально синхронізовано з базою)
         if role == "starosta":
             query = f"""
                 SELECT * FROM schedule 
-                WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
-                  AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
+                WHERE {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                  AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + ((7 - EXTRACT(ISODOW FROM (NOW() AT TIME ZONE 'Europe/Kyiv')))::int))
                 ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
             """
-            rows = await conn.fetch(query, today_str, sunday_str)
+            rows = await conn.fetch(query)
         else:
             query = f"""
                 SELECT * FROM schedule 
                 WHERE target_subgroup IN (0, $1)
-                  AND {SQL_DATE_CONVERT} >= TO_DATE($2, 'DD.MM.YYYY')
-                  AND {SQL_DATE_CONVERT} <= TO_DATE($3, 'DD.MM.YYYY')
+                  AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                  AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + ((7 - EXTRACT(ISODOW FROM (NOW() AT TIME ZONE 'Europe/Kyiv')))::int))
                 ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
             """
-            rows = await conn.fetch(query, subgroup, today_str, sunday_str)
+            rows = await conn.fetch(query, subgroup)
 
         return [dict(r) for r in rows]
 

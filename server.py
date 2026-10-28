@@ -64,7 +64,6 @@ def verify_telegram_data(init_data: str) -> dict:
         }
 
 def linkify_telegram(text: str) -> str:
-    """Конвертує сирі URL-адреси у клікабельний HTML тег <a> для повідомлень бота."""
     url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+|t\.me/[^\s<>"]+)'
     def replace_url(match):
         url = match.group(0)
@@ -73,7 +72,6 @@ def linkify_telegram(text: str) -> str:
     return re.sub(url_pattern, replace_url, text)
 
 def get_reminder_keyboard(reminder_id: int):
-    """Клавіатура бота для відмітки виконання студентом прямо в чаті."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Я виконав", callback_data=f"done_reminder_{reminder_id}")]
     ])
@@ -120,7 +118,6 @@ async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str =
         """, data.full_name.strip(), data.subgroup, tg_id)
     return {"status": "ok"}
 
-# Безпечне вилучення дати навіть якщо в рядку міститься назва дня тижня
 SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str, 1, 10), 'DD.MM.YYYY')"
 
 @app.get("/api/schedule")
@@ -138,7 +135,6 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
 
-        # 1. Пріоритетний діапазон пошуку користувача
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -162,7 +158,6 @@ async def get_schedule(
                 rows = await conn.fetch(query, subgroup, s_clean, e_clean)
             return [dict(r) for r in rows]
 
-        # 2. Дефолтний режим за замовчуванням: строго від СЬОГОДНІ до КІНЦЯ ЦЬОГО ТИЖНЯ (неділі)
         if role == "starosta":
             query = f"""
                 SELECT * FROM schedule 
@@ -314,15 +309,78 @@ async def delete_reminder(reminder_id: int = Query(...), x_telegram_init_data: s
     return {"status": "ok"}
 
 async def background_reminder_notifier():
-    """Періодичний фоновий таск перевірки дедлайнів кожні 30 хвилин (тільки для боржників)."""
     while True:
         try:
-            await asyncio.sleep(1800)
+            await asyncio.sleep(60)
             pool = await get_db_pool()
             if not pool:
                 continue
 
             async with pool.acquire() as conn:
+                expired_reminders = await conn.fetch("""
+                    SELECT id, title, description, deadline_at
+                    FROM reminders
+                    WHERE is_active = TRUE AND deadline_at <= NOW()
+                """)
+
+                for r in expired_reminders:
+                    rem_id = r["id"]
+                    d_str = r["deadline_at"].strftime('%d.%m.%Y %H:%M')
+
+                    completed_students = await conn.fetch("""
+                        SELECT u.telegram_id, u.full_name
+                        FROM users u
+                        JOIN reminder_completions rc ON rc.telegram_id = u.telegram_id
+                        WHERE rc.reminder_id = $1
+                    """, rem_id)
+
+                    debtors = await conn.fetch("""
+                        SELECT u.telegram_id, u.full_name
+                        FROM users u
+                        LEFT JOIN reminder_completions rc 
+                          ON rc.telegram_id = u.telegram_id AND rc.reminder_id = $1
+                        WHERE rc.id IS NULL
+                    """, rem_id)
+
+                    expired_msg_student = (
+                        f"🛑 <b>ТЕРМІН ЗДАЧІ ВИЧЕРПАНО!</b>\n\n"
+                        f"📌 Завдання: <b>{r['title']}</b>\n"
+                        f"Час дедлайну минув: <b>{d_str}</b>.\n\n"
+                        f"⚠️ <i>Ви не відмітили завдання як виконане. Робота вважається простроченою!</i>"
+                    )
+
+                    for s in debtors:
+                        try:
+                            await bot.send_message(
+                                chat_id=s["telegram_id"],
+                                text=expired_msg_student,
+                                parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass
+
+                    if STAROSTA_TELEGRAM_ID:
+                        debtors_list_str = "\n".join([f"• {d['full_name']}" for d in debtors]) or "— Немає (всі здали)"
+                        completed_list_str = "\n".join([f"• {c['full_name']}" for c in completed_students]) or "— Ніхто не здав"
+
+                        report_starosta = (
+                            f"📋 <b>ДЕДЛАЙН ЗАВЕРШЕНО</b>\n\n"
+                            f"📌 Завдання: <b>{r['title']}</b>\n"
+                            f"Дедлайн був до: <b>{d_str}</b>\n\n"
+                            f"✅ <b>Здали вчасно ({len(completed_students)}):</b>\n{completed_list_str}\n\n"
+                            f"❌ <b>Протермінували ({len(debtors)}):</b>\n{debtors_list_str}"
+                        )
+                        try:
+                            await bot.send_message(
+                                chat_id=STAROSTA_TELEGRAM_ID,
+                                text=report_starosta,
+                                parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass
+
+                    await conn.execute("UPDATE reminders SET is_active = FALSE WHERE id = $1", rem_id)
+
                 active_reminders = await conn.fetch("""
                     SELECT id, title, description, deadline_at
                     FROM reminders

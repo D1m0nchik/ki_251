@@ -97,6 +97,7 @@ async function init() {
 
   await refreshAllData();
 
+  // Автооновлення кожні 20 секунд
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
@@ -301,7 +302,8 @@ async function loadActiveReminders() {
       return;
     }
 
-    const nowTimestamp = new Date().getTime();
+    // Автоматично прибираємо всі дедлайни, час яких сплив
+    const nowTimestamp = Date.now();
     const reminders = rawReminders.filter(r => {
       if (!r.deadline_at) return true;
       const deadlineTimestamp = new Date(r.deadline_at).getTime();
@@ -662,7 +664,7 @@ async function openAttendanceModal(scheduleId, subjectName) {
   if (list) list.innerHTML = "<p>Завантаження студентів...</p>";
   
   const modal = document.getElementById("attendance-modal");
-  if (modal) modal.style.display = "block";
+  if (modal) modal.style.display = "flex";
 
   try {
     const students = await apiRequest(`/api/attendance/students?schedule_id=${scheduleId}`);

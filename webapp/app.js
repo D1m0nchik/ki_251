@@ -119,7 +119,6 @@ async function loadSchedule(isBackground = false) {
     container.innerHTML = "<p class='loading'>Завантаження розкладу...</p>";
   }
 
-  // Якщо активний діапазон дат користувача — запитуємо суто його
   let url = "/api/schedule";
   if (activeSearchRange && activeSearchRange.sStr && activeSearchRange.eStr) {
     url = `/api/schedule?sdate=${encodeURIComponent(activeSearchRange.sStr)}&edate=${encodeURIComponent(activeSearchRange.eStr)}`;
@@ -167,7 +166,6 @@ async function applyLocalDateFilter() {
     return;
   }
 
-  // Фіксуємо пріоритетний діапазон
   activeSearchRange = { sStr: sdateStr, eStr: edateStr };
 
   const container = document.getElementById("schedule-list");
@@ -176,7 +174,6 @@ async function applyLocalDateFilter() {
   }
 
   try {
-    // Відправляємо запит і ОДРАЗУ отримуємо готовий відфільтрований розклад з бекенду
     allScheduleData = await apiRequest("/api/schedule/fetch_range", "POST", { 
       sdate: sdateStr, 
       edate: edateStr 
@@ -192,7 +189,6 @@ async function applyLocalDateFilter() {
   }
 }
 
-// Перемикач підгруп для старости
 function switchStarostaViewSubgroup(subgroup, btn) {
   selectedSubgroupFilter = subgroup;
   document.querySelectorAll(".sg-btn").forEach(b => b.classList.remove("active"));
@@ -200,7 +196,6 @@ function switchStarostaViewSubgroup(subgroup, btn) {
   renderSchedule(allScheduleData);
 }
 
-// Синхронізація розкладу на місяць вперед
 async function syncFullMonth() {
   const container = document.getElementById("schedule-list");
   if (container) container.innerHTML = "<p class='loading'>🔄 Кешування розкладу на місяць вперед...</p>";
@@ -431,7 +426,9 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
-// Зведена аналітика пропусків групи (в стилі скріншота)
+// -------------------------------------------------------------
+// 1. Зведена аналітика пропусків групи (в стилі скріншота)
+// -------------------------------------------------------------
 async function loadGroupStats() {
   const container = document.getElementById("group-stats-table-container");
   if (!container) return;
@@ -441,28 +438,27 @@ async function loadGroupStats() {
     container.innerHTML = "";
 
     if (!data || data.length === 0) {
-      container.innerHTML = "<p class='text-muted'>Дані ще не накопичено.</p>";
+      container.innerHTML = "<p style='color: #8e8ea0; font-size: 13px;'>Дані ще не накопичено.</p>";
       return;
     }
 
-    // 1. Рахуємо глобальні лічильники
     let totalRiskCount = 0;
     const totalStudents = data.length;
 
-    // Шукаємо максимальну кількість пар, які були відмічені
+    // Рахуємо максимальну кількість пар
     let maxLessons = 0;
     data.forEach(st => {
       const checked = (st.present_count || 0) + (st.absent_count || 0) + (st.late_count || 0) + (st.excused_count || 0);
       if (checked > maxLessons) maxLessons = checked;
-      // Поріг ризику: 3 і більше пропусків
-      if ((st.absent_count || 0) >= 3) {
+      // Якщо є пропуски
+      if ((st.absent_count || 0) >= 1) {
         totalRiskCount++;
       }
     });
 
-    if (maxLessons === 0) maxLessons = 1; // Захист від ділення на 0
+    if (maxLessons === 0) maxLessons = 1;
 
-    // Заповнюємо 3 верхні картки
+    // 1. Оновлюємо верхні 3 метрики
     const riskElem = document.getElementById("metric-risk-count");
     if (riskElem) riskElem.innerText = totalRiskCount;
 
@@ -472,61 +468,111 @@ async function loadGroupStats() {
     const lesElem = document.getElementById("metric-lessons-total");
     if (lesElem) lesElem.innerText = maxLessons;
 
-    // Сортуємо: спочатку ті, у кого найбільше пропусків
+    // Якщо контейнер із картками метрик відсутній або злипся — перестворюємо 3 окремі картки
+    let metricsParent = document.querySelector(".metrics-grid");
+    if (!metricsParent && riskElem) {
+      metricsParent = riskElem.parentElement;
+      if (metricsParent) {
+        metricsParent.style.cssText = "display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;";
+      }
+    }
+
+    // Сортуємо: спочатку ті, хто має найбільше пропусків
     data.sort((a, b) => (b.absent_count || 0) - (a.absent_count || 0));
 
-    // 2. Рендеримо картки кожного студента
+    // 2. Рендеримо картки кожного студента в стилі скріншота
     data.forEach(st => {
-      const pres = (st.present_count || 0) + (st.late_count || 0); // бував на парі
+      const pres = (st.present_count || 0) + (st.late_count || 0);
       const abs = st.absent_count || 0;
       const exc = st.excused_count || 0;
-      const totalForSt = pres + abs + exc;
-      const baseline = totalForSt > 0 ? totalForSt : maxLessons;
+      const totalStLessons = pres + abs + exc;
+      const baseline = totalStLessons > 0 ? totalStLessons : maxLessons;
 
-      const isRisk = abs >= 3;
+      const isRisk = abs >= 1;
 
-      // Рахуємо ширину сегментів для прогрес-бара у %
+      // Ширина частин прогрес-бара у %
       const presWidth = ((pres / baseline) * 100).toFixed(1);
       const absWidth = ((abs / baseline) * 100).toFixed(1);
       const excWidth = ((exc / baseline) * 100).toFixed(1);
 
       // Формуємо бейджі
       let badgesHtml = "";
-      if (isRisk) {
-        badgesHtml += `<span class="badge-risk">на межі · ${abs} проп.</span>`;
-      } else if (abs > 0) {
-        badgesHtml += `<span class="badge-neutral">${abs} проп.</span>`;
+      if (abs > 0) {
+        badgesHtml += `<span style="background: rgba(255, 71, 87, 0.18); color: #ff6b81; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">на межі · ${abs} проп.</span>`;
       }
-
       if (exc > 0) {
-        badgesHtml += `<span class="badge-excused">${exc} поваж.</span>`;
+        badgesHtml += `<span style="background: rgba(52, 152, 219, 0.18); color: #3498db; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">${exc} поваж.</span>`;
       }
 
       const card = document.createElement("div");
-      card.className = `student-stat-card-modern ${isRisk ? 'is-risk' : ''}`;
+      const borderLeft = isRisk ? "border-left: 3px solid #ff4757;" : "border-left: 1px solid #232435;";
+      card.style.cssText = `background: #161722; border: 1px solid #232435; ${borderLeft} border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;`;
+
       card.innerHTML = `
-        <div class="student-stat-header">
-          <span class="student-stat-name">${st.full_name}</span>
-          <div class="student-badges-group">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 15px; font-weight: 700; color: #ffffff;">${st.full_name}</span>
+          <div style="display: flex; gap: 6px; align-items: center;">
             ${badgesHtml}
           </div>
         </div>
 
-        <div class="student-stat-multibar">
-          <div class="multibar-fill fill-pres" style="width: ${presWidth}%;"></div>
-          <div class="multibar-fill fill-abs" style="width: ${absWidth}%;"></div>
-          <div class="multibar-fill fill-exc" style="width: ${excWidth}%;"></div>
+        <!-- Багатоколірний прогрес-бар -->
+        <div style="width: 100%; height: 6px; background: #262738; border-radius: 4px; display: flex; overflow: hidden; margin-top: 4px;">
+          <div style="width: ${presWidth}%; background: #2ecc71; height: 100%;"></div>
+          <div style="width: ${absWidth}%; background: #ff4757; height: 100%;"></div>
+          <div style="width: ${excWidth}%; background: #3498db; height: 100%;"></div>
         </div>
 
-        <div class="student-stat-footer">
+        <div style="display: flex; justify-content: flex-end; font-size: 12px; color: #8e8ea0;">
           <span>був ${pres} із ${baseline}</span>
         </div>
       `;
       container.appendChild(card);
     });
   } catch (err) {
-    container.innerHTML = "<p style='color:red;'>Не вдалося завантажити статистику групи.</p>";
+    container.innerHTML = "<p style='color: #ff4757; font-size: 13px;'>Не вдалося завантажити статистику групи.</p>";
   }
+}
+
+// -------------------------------------------------------------
+// 2. Керування складом групи (з правильними відступами всередині)
+// -------------------------------------------------------------
+async function loadGroupManagement() {
+  try {
+    const students = await apiRequest("/api/group/students");
+    const container = document.getElementById("group-students-list");
+    if (!container) return;
+    container.innerHTML = "";
+
+    students.forEach(s => {
+      const card = document.createElement("div");
+      // Відступи padding: 14px 16px запобігають прилипанню тексту до лівого краю
+      card.style.cssText = "background: #161722; border: 1px solid #232435; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;";
+
+      card.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <strong style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px;">${s.full_name}</strong>
+          <span style="font-size: 12px; color: #8e8ea0;">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</span>
+        </div>
+        <div>
+          <select onchange="changeSubgroup(${s.telegram_id}, this.value)" style="background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+            <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
+            <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
+          </select>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  } catch (e) {
+    console.error("Помилка завантаження студентів:", e);
+  }
+}
+
+async function changeSubgroup(tgId, newSg) {
+  await apiRequest("/api/group/change_subgroup", "POST", {
+    student_tg_id: tgId,
+    subgroup: parseInt(newSg)
+  });
 }
 
 async function downloadAttendanceReport() {
@@ -595,42 +641,6 @@ async function sendBroadcastMessage() {
   document.getElementById("broadcast-title").value = "";
   document.getElementById("broadcast-body").value = "";
   await loadAnnouncements();
-}
-
-async function loadGroupManagement() {
-  try {
-    const students = await apiRequest("/api/group/students");
-    const container = document.getElementById("group-students-list");
-    if (!container) return;
-    container.innerHTML = "";
-
-    students.forEach(s => {
-      const card = document.createElement("div");
-      card.className = "card student-row";
-      card.innerHTML = `
-        <div>
-          <strong>${s.full_name}</strong>
-          <div style="font-size:12px; color:var(--text-muted);">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</div>
-        </div>
-        <div>
-          <select onchange="changeSubgroup(${s.telegram_id}, this.value)" class="status-select">
-            <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
-            <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
-          </select>
-        </div>
-      `;
-      container.appendChild(card);
-    });
-  } catch (e) {
-    console.error("Помилка завантаження студентів:", e);
-  }
-}
-
-async function changeSubgroup(tgId, newSg) {
-  await apiRequest("/api/group/change_subgroup", "POST", {
-    student_tg_id: tgId,
-    subgroup: parseInt(newSg)
-  });
 }
 
 function openProfileModal() {

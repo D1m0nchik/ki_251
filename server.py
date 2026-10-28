@@ -9,7 +9,8 @@ import asyncio
 from urllib.parse import parse_qsl
 from pathlib import Path
 from typing import Dict, Optional
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Header, HTTPException, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,9 @@ from parser import fetch_and_save_schedule
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 STAROSTA_TELEGRAM_ID = int(os.environ.get("STAROSTA_TELEGRAM_ID", 0))
+
+# Часовий пояс України
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 app = FastAPI()
 
@@ -75,6 +79,17 @@ def get_reminder_keyboard(reminder_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Я виконав", callback_data=f"done_reminder_{reminder_id}")]
     ])
+
+def parse_to_utc(dt_str: str) -> datetime:
+    """Приймає рядок з форми і перетворює його з Київського часу в UTC для бази даних"""
+    clean_str = dt_str.replace("Z", "")
+    dt_naive = datetime.fromisoformat(clean_str)
+    # Якщо таймзона не була передана з фронту — вважаємо, що це час по Києву
+    if dt_naive.tzinfo is None:
+        dt_kyiv = dt_naive.replace(tzinfo=KYIV_TZ)
+    else:
+        dt_kyiv = dt_naive.astimezone(KYIV_TZ)
+    return dt_kyiv.astimezone(timezone.utc)
 
 @app.get("/api/user_data")
 async def get_user_data(x_telegram_init_data: str = Header(...)):
@@ -214,8 +229,8 @@ async def get_active_reminders(x_telegram_init_data: str = Header(...)):
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT r.id, r.title, r.description,
-                   to_char(r.start_at, 'DD.MM.YYYY HH24:MI') as start_str,
-                   to_char(r.deadline_at, 'DD.MM.YYYY HH24:MI') as deadline_str,
+                   to_char(r.start_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as start_str,
+                   to_char(r.deadline_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as deadline_str,
                    r.deadline_at,
                    r.is_active,
                    (c.id IS NOT NULL) as is_completed_by_me,
@@ -225,7 +240,15 @@ async def get_active_reminders(x_telegram_init_data: str = Header(...)):
             WHERE r.is_active = TRUE AND r.deadline_at > NOW()
             ORDER BY r.deadline_at ASC
         """, tg_id)
-        return [dict(r) for r in rows]
+        
+        result = []
+        for r in rows:
+            d = dict(r)
+            # Перетворюємо дедлайн в ISO-формат з таймзоною UTC
+            if d.get("deadline_at"):
+                d["deadline_at"] = d["deadline_at"].isoformat()
+            result.append(d)
+        return result
 
 @app.post("/api/reminders/create")
 async def create_reminder(data: ReminderCreateRequest, x_telegram_init_data: str = Header(...)):
@@ -236,33 +259,26 @@ async def create_reminder(data: ReminderCreateRequest, x_telegram_init_data: str
         if not u or u["role"] != "starosta":
             raise HTTPException(status_code=403, detail="Тільки староста може створювати нагадування")
 
-        try:
-            deadline_dt = datetime.fromisoformat(data.deadline_at.replace("Z", "+00:00"))
-        except Exception:
-            deadline_dt = datetime.strptime(data.deadline_at, "%Y-%m-%dT%H:%M")
-
-        start_dt = datetime.now(timezone.utc)
-        if data.start_at:
-            try:
-                start_dt = datetime.fromisoformat(data.start_at.replace("Z", "+00:00"))
-            except Exception:
-                start_dt = datetime.strptime(data.start_at, "%Y-%m-%dT%H:%M")
+        deadline_utc = parse_to_utc(data.deadline_at)
+        start_utc = parse_to_utc(data.start_at) if data.start_at else datetime.now(timezone.utc)
 
         rem_row = await conn.fetchrow("""
             INSERT INTO reminders (title, description, start_at, deadline_at)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-        """, data.title.strip(), data.description.strip(), start_dt, deadline_dt)
+        """, data.title.strip(), data.description.strip(), start_utc, deadline_utc)
         reminder_id = rem_row["id"]
 
         students = await conn.fetch("SELECT telegram_id FROM users")
 
+    # Відображення для повідомлення в боті по Києву
+    deadline_kyiv_str = deadline_utc.astimezone(KYIV_TZ).strftime('%d.%m.%Y %H:%M')
     desc_block = f"{data.description.strip()}\n\n" if data.description.strip() else ""
     text = (
         f"⏳ <b>УВАГА! НОВИЙ ДЕДЛАЙН</b>\n\n"
         f"📌 <b>{data.title.strip()}</b>\n"
         f"{desc_block}"
-        f"🕒 <b>Дедлайн:</b> до {deadline_dt.strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"🕒 <b>Дедлайн:</b> до {deadline_kyiv_str}\n\n"
         f"<i>Коли здасте роботу, натисніть кнопку нижче, щоб вимкнути автонагадування.</i>"
     )
 
@@ -309,6 +325,7 @@ async def delete_reminder(reminder_id: int = Query(...), x_telegram_init_data: s
     return {"status": "ok"}
 
 async def background_reminder_notifier():
+    """Фоновий таск перевірки щохвилини для точного спрацьовування"""
     while True:
         try:
             await asyncio.sleep(60)
@@ -317,6 +334,7 @@ async def background_reminder_notifier():
                 continue
 
             async with pool.acquire() as conn:
+                # 1. Завдання, дедлайн яких минув
                 expired_reminders = await conn.fetch("""
                     SELECT id, title, description, deadline_at
                     FROM reminders
@@ -325,7 +343,7 @@ async def background_reminder_notifier():
 
                 for r in expired_reminders:
                     rem_id = r["id"]
-                    d_str = r["deadline_at"].strftime('%d.%m.%Y %H:%M')
+                    d_kyiv = r["deadline_at"].astimezone(KYIV_TZ).strftime('%d.%m.%Y %H:%M')
 
                     completed_students = await conn.fetch("""
                         SELECT u.telegram_id, u.full_name
@@ -342,10 +360,11 @@ async def background_reminder_notifier():
                         WHERE rc.id IS NULL
                     """, rem_id)
 
+                    # Сповіщення боржникам
                     expired_msg_student = (
                         f"🛑 <b>ТЕРМІН ЗДАЧІ ВИЧЕРПАНО!</b>\n\n"
                         f"📌 Завдання: <b>{r['title']}</b>\n"
-                        f"Час дедлайну минув: <b>{d_str}</b>.\n\n"
+                        f"Час дедлайну минув: <b>{d_kyiv}</b>.\n\n"
                         f"⚠️ <i>Ви не відмітили завдання як виконане. Робота вважається простроченою!</i>"
                     )
 
@@ -359,6 +378,7 @@ async def background_reminder_notifier():
                         except Exception:
                             pass
 
+                    # Звіт старості
                     if STAROSTA_TELEGRAM_ID:
                         debtors_list_str = "\n".join([f"• {d['full_name']}" for d in debtors]) or "— Немає (всі здали)"
                         completed_list_str = "\n".join([f"• {c['full_name']}" for c in completed_students]) or "— Ніхто не здав"
@@ -366,7 +386,7 @@ async def background_reminder_notifier():
                         report_starosta = (
                             f"📋 <b>ДЕДЛАЙН ЗАВЕРШЕНО</b>\n\n"
                             f"📌 Завдання: <b>{r['title']}</b>\n"
-                            f"Дедлайн був до: <b>{d_str}</b>\n\n"
+                            f"Дедлайн був до: <b>{d_kyiv}</b>\n\n"
                             f"✅ <b>Здали вчасно ({len(completed_students)}):</b>\n{completed_list_str}\n\n"
                             f"❌ <b>Протермінували ({len(debtors)}):</b>\n{debtors_list_str}"
                         )
@@ -381,6 +401,7 @@ async def background_reminder_notifier():
 
                     await conn.execute("UPDATE reminders SET is_active = FALSE WHERE id = $1", rem_id)
 
+                # 2. Періодичні нагадування (менше 24 год, не частіше ніж раз на 6 год)
                 active_reminders = await conn.fetch("""
                     SELECT id, title, description, deadline_at
                     FROM reminders
@@ -402,14 +423,14 @@ async def background_reminder_notifier():
                     if not debtors:
                         continue
 
-                    d_str = r["deadline_at"].strftime('%d.%m.%Y %H:%M')
+                    d_kyiv = r["deadline_at"].astimezone(KYIV_TZ).strftime('%d.%m.%Y %H:%M')
                     desc_text = f"{r['description']}\n\n" if r['description'] else ""
                     msg = (
                         f"⏰ <b>НАГАДУВАННЯ ПРО ДЕДЛАЙН!</b>\n\n"
                         f"📌 <b>{r['title']}</b>\n"
-                        f"Залишилося менше доби! Роботу потрібно здати до <b>{d_str}</b>.\n"
+                        f"Залишилося менше доби! Роботу потрібно здати до <b>{d_kyiv}</b>.\n"
                         f"{desc_text}"
-                        f"<i>Якщо ви вже виконали завдання — натисніть кнопку нижче:</i>"
+                        f"<i>Якщо ви вже здали — обов'язково тисніть кнопку нижче:</i>"
                     )
                     kb = get_reminder_keyboard(r["id"])
 

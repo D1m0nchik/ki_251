@@ -51,7 +51,6 @@
         </div>
       </section>
 
-      <!-- 2. Вкладка Склад групи (тільки для старости) -->
       <!-- 2. Вкладка Склад групи (для старости) -->
       <section id="tab-group" class="tab-pane">
         <h2 style="font-size: 24px; font-weight: 800; margin: 0 0 6px 0; color: #fff;">Склад групи КІ-25-1</h2>
@@ -69,19 +68,24 @@
         </div>
         <p style="margin: 0 0 16px 0; font-size: 13px; color: #8e8ea0;">Поріг 3 пропуски з дисципліни</p>
 
-        <!-- 3 окремі акуратні картки метрик зверху -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;">
-          <div style="background: rgba(255, 71, 87, 0.08); border: 1px solid rgba(255, 71, 87, 0.25); border-radius: 12px; padding: 14px 12px; display: flex; flex-direction: column;">
-            <span id="metric-risk-count" style="font-size: 24px; font-weight: 800; color: #ff6b81; line-height: 1;">0</span>
-            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px;">в групі ризику</span>
+        <!-- 3 акуратні картки метрик зверху -->
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px;">
+          <!-- Картка 1: В групі ризику -->
+          <div style="background: rgba(255, 71, 87, 0.08); border: 1px solid rgba(255, 71, 87, 0.25); border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
+            <span id="metric-risk-count" style="font-size: 26px; font-weight: 800; color: #ff6b81; line-height: 1;">0</span>
+            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">в групі ризику</span>
           </div>
-          <div style="background: #171822; border: 1px solid #262738; border-radius: 12px; padding: 14px 12px; display: flex; flex-direction: column;">
-            <span id="metric-students-count" style="font-size: 24px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
-            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px;">студентів</span>
+
+          <!-- Картка 2: Студентів -->
+          <div style="background: #171822; border: 1px solid #262738; border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
+            <span id="metric-students-count" style="font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
+            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">студентів</span>
           </div>
-          <div style="background: #171822; border: 1px solid #262738; border-radius: 12px; padding: 14px 12px; display: flex; flex-direction: column;">
-            <span id="metric-lessons-total" style="font-size: 24px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
-            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px;">пар всього</span>
+
+          <!-- Картка 3: Пар всього -->
+          <div style="background: #171822; border: 1px solid #262738; border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
+            <span id="metric-lessons-total" style="font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
+            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">пар всього</span>
           </div>
         </div>
 

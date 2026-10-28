@@ -445,20 +445,20 @@ async function loadGroupStats() {
     let totalRiskCount = 0;
     const totalStudents = data.length;
 
-    // Рахуємо максимальну кількість пар
+    // Рахуємо максимальну кількість пар, які були відмічені старостою
     let maxLessons = 0;
     data.forEach(st => {
       const checked = (st.present_count || 0) + (st.absent_count || 0) + (st.late_count || 0) + (st.excused_count || 0);
       if (checked > maxLessons) maxLessons = checked;
-      // Якщо є пропуски
-      if ((st.absent_count || 0) >= 1) {
+      // Поріг ризику: 3 і більше пропусків
+      if ((st.absent_count || 0) >= 3) {
         totalRiskCount++;
       }
     });
 
     if (maxLessons === 0) maxLessons = 1;
 
-    // 1. Оновлюємо верхні 3 метрики
+    // Оновлюємо верхні 3 метрики
     const riskElem = document.getElementById("metric-risk-count");
     if (riskElem) riskElem.innerText = totalRiskCount;
 
@@ -468,19 +468,10 @@ async function loadGroupStats() {
     const lesElem = document.getElementById("metric-lessons-total");
     if (lesElem) lesElem.innerText = maxLessons;
 
-    // Якщо контейнер із картками метрик відсутній або злипся — перестворюємо 3 окремі картки
-    let metricsParent = document.querySelector(".metrics-grid");
-    if (!metricsParent && riskElem) {
-      metricsParent = riskElem.parentElement;
-      if (metricsParent) {
-        metricsParent.style.cssText = "display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;";
-      }
-    }
-
     // Сортуємо: спочатку ті, хто має найбільше пропусків
     data.sort((a, b) => (b.absent_count || 0) - (a.absent_count || 0));
 
-    // 2. Рендеримо картки кожного студента в стилі скріншота
+    // Рендеримо картку кожного студента
     data.forEach(st => {
       const pres = (st.present_count || 0) + (st.late_count || 0);
       const abs = st.absent_count || 0;
@@ -488,42 +479,45 @@ async function loadGroupStats() {
       const totalStLessons = pres + abs + exc;
       const baseline = totalStLessons > 0 ? totalStLessons : maxLessons;
 
-      const isRisk = abs >= 1;
+      const isRisk = abs >= 3;
 
-      // Ширина частин прогрес-бара у %
+      // Рахуємо ширину сегментів для прогрес-бара у %
       const presWidth = ((pres / baseline) * 100).toFixed(1);
       const absWidth = ((abs / baseline) * 100).toFixed(1);
       const excWidth = ((exc / baseline) * 100).toFixed(1);
 
-      // Формуємо бейджі
+      // Формуємо бейджі праворуч
       let badgesHtml = "";
-      if (abs > 0) {
+      if (isRisk) {
         badgesHtml += `<span style="background: rgba(255, 71, 87, 0.18); color: #ff6b81; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">на межі · ${abs} проп.</span>`;
+      } else if (abs > 0) {
+        badgesHtml += `<span style="background: rgba(142, 142, 160, 0.15); color: #8e8ea0; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">${abs} проп.</span>`;
       }
+
       if (exc > 0) {
         badgesHtml += `<span style="background: rgba(52, 152, 219, 0.18); color: #3498db; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">${exc} поваж.</span>`;
       }
 
       const card = document.createElement("div");
       const borderLeft = isRisk ? "border-left: 3px solid #ff4757;" : "border-left: 1px solid #232435;";
-      card.style.cssText = `background: #161722; border: 1px solid #232435; ${borderLeft} border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;`;
+      card.style.cssText = `background: #161722; border: 1px solid #232435; ${borderLeft} border-radius: 14px; padding: 14px 18px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box;`;
 
       card.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="font-size: 15px; font-weight: 700; color: #ffffff;">${st.full_name}</span>
+          <span style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px;">${st.full_name}</span>
           <div style="display: flex; gap: 6px; align-items: center;">
             ${badgesHtml}
           </div>
         </div>
 
         <!-- Багатоколірний прогрес-бар -->
-        <div style="width: 100%; height: 6px; background: #262738; border-radius: 4px; display: flex; overflow: hidden; margin-top: 4px;">
+        <div style="width: 100%; height: 7px; background: #232435; border-radius: 4px; display: flex; overflow: hidden; margin-top: 4px;">
           <div style="width: ${presWidth}%; background: #2ecc71; height: 100%;"></div>
           <div style="width: ${absWidth}%; background: #ff4757; height: 100%;"></div>
           <div style="width: ${excWidth}%; background: #3498db; height: 100%;"></div>
         </div>
 
-        <div style="display: flex; justify-content: flex-end; font-size: 12px; color: #8e8ea0;">
+        <div style="display: flex; justify-content: flex-end; font-size: 12px; color: #8e8ea0; margin-top: 2px;">
           <span>був ${pres} із ${baseline}</span>
         </div>
       `;

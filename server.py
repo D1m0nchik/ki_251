@@ -117,7 +117,7 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
         
-        # 1. Якщо користувач передав свій діапазон дат (sdate / edate)
+        # 1. Пошуковий пріоритет користувача: вибірка строго в зазначеному діапазоні
         if sdate and edate:
             if role == "starosta":
                 query = """
@@ -137,6 +137,25 @@ async def get_schedule(
                 """
                 rows = await conn.fetch(query, subgroup, sdate, edate)
             return [dict(r) for r in rows]
+
+        # 2. Основний розклад: від сьогоднішнього дня
+        if role == "starosta":
+            query = """
+                SELECT * FROM schedule 
+                WHERE to_date(date_str, 'DD.MM.YYYY') >= CURRENT_DATE
+                ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+            """
+            rows = await conn.fetch(query)
+        else:
+            query = """
+                SELECT * FROM schedule 
+                WHERE target_subgroup IN (0, $1)
+                  AND to_date(date_str, 'DD.MM.YYYY') >= CURRENT_DATE
+                ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+            """
+            rows = await conn.fetch(query, subgroup)
+
+        return [dict(r) for r in rows]
 
         # 2. ОСНОВНИЙ РЕЖИМ ЗА ЗАМОВЧУВАННЯМ: строго від СЬОГОДНІ і до неділі (кінця тижня)
         # CURRENT_DATE в PostgreSQL бере поточний день і відкидає 27 число назавжди!

@@ -431,7 +431,7 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
-// Загальна статистика для старости
+// Зведена аналітика пропусків групи (в стилі скріншота)
 async function loadGroupStats() {
   const container = document.getElementById("group-stats-table-container");
   if (!container) return;
@@ -445,25 +445,81 @@ async function loadGroupStats() {
       return;
     }
 
-    data.forEach(st => {
-      const card = document.createElement("div");
-      card.className = "card group-student-stat-card";
-      const badgeColor = st.percent >= 80 ? '#2ecc71' : (st.percent >= 50 ? '#ffa502' : '#ff4757');
+    // 1. Рахуємо глобальні лічильники
+    let totalRiskCount = 0;
+    const totalStudents = data.length;
 
+    // Шукаємо максимальну кількість пар, які були відмічені
+    let maxLessons = 0;
+    data.forEach(st => {
+      const checked = (st.present_count || 0) + (st.absent_count || 0) + (st.late_count || 0) + (st.excused_count || 0);
+      if (checked > maxLessons) maxLessons = checked;
+      // Поріг ризику: 3 і більше пропусків
+      if ((st.absent_count || 0) >= 3) {
+        totalRiskCount++;
+      }
+    });
+
+    if (maxLessons === 0) maxLessons = 1; // Захист від ділення на 0
+
+    // Заповнюємо 3 верхні картки
+    const riskElem = document.getElementById("metric-risk-count");
+    if (riskElem) riskElem.innerText = totalRiskCount;
+
+    const stElem = document.getElementById("metric-students-count");
+    if (stElem) stElem.innerText = totalStudents;
+
+    const lesElem = document.getElementById("metric-lessons-total");
+    if (lesElem) lesElem.innerText = maxLessons;
+
+    // Сортуємо: спочатку ті, у кого найбільше пропусків
+    data.sort((a, b) => (b.absent_count || 0) - (a.absent_count || 0));
+
+    // 2. Рендеримо картки кожного студента
+    data.forEach(st => {
+      const pres = (st.present_count || 0) + (st.late_count || 0); // бував на парі
+      const abs = st.absent_count || 0;
+      const exc = st.excused_count || 0;
+      const totalForSt = pres + abs + exc;
+      const baseline = totalForSt > 0 ? totalForSt : maxLessons;
+
+      const isRisk = abs >= 3;
+
+      // Рахуємо ширину сегментів для прогрес-бара у %
+      const presWidth = ((pres / baseline) * 100).toFixed(1);
+      const absWidth = ((abs / baseline) * 100).toFixed(1);
+      const excWidth = ((exc / baseline) * 100).toFixed(1);
+
+      // Формуємо бейджі
+      let badgesHtml = "";
+      if (isRisk) {
+        badgesHtml += `<span class="badge-risk">на межі · ${abs} проп.</span>`;
+      } else if (abs > 0) {
+        badgesHtml += `<span class="badge-neutral">${abs} проп.</span>`;
+      }
+
+      if (exc > 0) {
+        badgesHtml += `<span class="badge-excused">${exc} поваж.</span>`;
+      }
+
+      const card = document.createElement("div");
+      card.className = `student-stat-card-modern ${isRisk ? 'is-risk' : ''}`;
       card.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <strong>${st.full_name}</strong>
-            <div style="font-size:12px; color:var(--text-muted);">${st.subgroup} підгрупа</div>
-          </div>
-          <div style="font-weight:bold; font-size:15px; color:${badgeColor}; background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:6px;">
-            ${st.percent}%
+        <div class="student-stat-header">
+          <span class="student-stat-name">${st.full_name}</span>
+          <div class="student-badges-group">
+            ${badgesHtml}
           </div>
         </div>
-        <div style="font-size:12px; margin-top:8px; display:flex; gap:10px; color:var(--text-muted);">
-          <span>✅ Був: <b>${st.present_count}</b></span>
-          <span>❌ Н: <b>${st.absent_count}</b></span>
-          <span>⏳ Запізн.: <b>${st.late_count}</b></span>
+
+        <div class="student-stat-multibar">
+          <div class="multibar-fill fill-pres" style="width: ${presWidth}%;"></div>
+          <div class="multibar-fill fill-abs" style="width: ${absWidth}%;"></div>
+          <div class="multibar-fill fill-exc" style="width: ${excWidth}%;"></div>
+        </div>
+
+        <div class="student-stat-footer">
+          <span>був ${pres} із ${baseline}</span>
         </div>
       `;
       container.appendChild(card);

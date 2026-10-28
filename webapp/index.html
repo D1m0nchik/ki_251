@@ -52,38 +52,41 @@
       </section>
 
       <!-- 2. Вкладка Склад групи (тільки для старости) -->
+      <!-- 2. Вкладка Склад групи (для старости) -->
       <section id="tab-group" class="tab-pane">
-        <h3 class="section-title">Склад групи КІ-25-1</h3>
-        <p class="text-muted" style="font-size:13px; margin-bottom: 12px;">Розподіл по підгрупах</p>
-        <div id="group-students-list" class="students-list"></div>
+        <h2 style="font-size: 24px; font-weight: 800; margin: 0 0 6px 0; color: #fff;">Склад групи КІ-25-1</h2>
+        <p style="font-size: 13px; color: #8e8ea0; margin: 0 0 16px 0;">Розподіл по підгрупах</p>
+        <div id="group-students-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
       </section>
 
-      <!-- 3. Вкладка Статистика групи (для старости) -->
+      <!-- 3. Вкладка Статистика пропусків (Журнал для старости) -->
       <section id="tab-group-stats" class="tab-pane">
-        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
-          <h2 class="stats-screen-title">Прогули</h2>
-          <button class="btn-download" onclick="downloadAttendanceReport()">📥 Excel</button>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <h2 style="font-size: 26px; font-weight: 800; color: #ffffff; margin: 0;">Прогули</h2>
+          <button onclick="downloadAttendanceReport()" style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.4); color: #2ecc71; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            📥 Excel
+          </button>
         </div>
-        <p class="stats-screen-subtitle">Поріг 3 пропуски з дисципліни</p>
+        <p style="margin: 0 0 16px 0; font-size: 13px; color: #8e8ea0;">Поріг 3 пропуски з дисципліни</p>
 
-        <!-- 3 метричні картки зверху -->
-        <div class="metrics-grid">
-          <div class="metric-card risk-card">
-            <span class="metric-val" id="metric-risk-count">0</span>
-            <span class="metric-lbl">в групі ризику</span>
+        <!-- 3 окремі акуратні картки метрик зверху -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;">
+          <div style="background: rgba(255, 71, 87, 0.08); border: 1px solid rgba(255, 71, 87, 0.25); border-radius: 12px; padding: 14px 12px; display: flex; flex-direction: column;">
+            <span id="metric-risk-count" style="font-size: 24px; font-weight: 800; color: #ff6b81; line-height: 1;">0</span>
+            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px;">в групі ризику</span>
           </div>
-          <div class="metric-card">
-            <span class="metric-val" id="metric-students-count">0</span>
-            <span class="metric-lbl">студентів</span>
+          <div style="background: #171822; border: 1px solid #262738; border-radius: 12px; padding: 14px 12px; display: flex; flex-direction: column;">
+            <span id="metric-students-count" style="font-size: 24px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
+            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px;">студентів</span>
           </div>
-          <div class="metric-card">
-            <span class="metric-val" id="metric-lessons-total">0</span>
-            <span class="metric-lbl">пар всього</span>
+          <div style="background: #171822; border: 1px solid #262738; border-radius: 12px; padding: 14px 12px; display: flex; flex-direction: column;">
+            <span id="metric-lessons-total" style="font-size: 24px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
+            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px;">пар всього</span>
           </div>
         </div>
 
-        <!-- Список студентів з багатоколірними барами -->
-        <div id="group-stats-table-container" class="risk-students-list">
+        <!-- Контейнер карток студентів з барами -->
+        <div id="group-stats-table-container" style="display: flex; flex-direction: column; gap: 10px;">
           <p class="loading">Завантаження аналітики...</p>
         </div>
       </section>

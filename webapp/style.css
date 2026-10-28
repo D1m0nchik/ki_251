@@ -2,6 +2,8 @@
   --bg-color: #0f1015;
   --card-bg: #161722;
   --card-border: #232435;
+  --input-bg: #202130;
+  --input-border: #2f3045;
   --text-main: #ffffff;
   --text-muted: #8e8ea0;
   --primary: #6c5ce7;
@@ -24,6 +26,7 @@ body {
   min-height: 100vh;
   display: flex;
   justify-content: center;
+  overflow-x: hidden;
 }
 
 .app-container {
@@ -36,6 +39,7 @@ body {
   padding: 16px 16px 85px 16px;
 }
 
+/* Верхній бар */
 .app-header {
   display: flex;
   justify-content: space-between;
@@ -71,6 +75,7 @@ body {
   cursor: pointer;
 }
 
+/* Вкладки */
 .tab-pane {
   display: none;
   width: 100%;
@@ -80,6 +85,7 @@ body {
   display: block;
 }
 
+/* Картки */
 .card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
@@ -88,6 +94,34 @@ body {
   margin-bottom: 12px;
 }
 
+/* ТЕМНІ АКУРАТНІ ПОЛЯ ВВОДУ ТА ТЕКСТОВІ ОБЛАСТІ */
+input[type="text"],
+input[type="datetime-local"],
+textarea,
+select {
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease;
+}
+
+input[type="text"]:focus,
+input[type="datetime-local"]:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--primary);
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* Блок вибору дат розкладу */
 .filter-card h4 {
   margin-bottom: 10px;
   font-size: 14px;
@@ -104,15 +138,10 @@ body {
 .date-inputs input {
   flex: 1;
   min-width: 90px;
-  background: #202130;
-  border: 1px solid #2f3045;
-  border-radius: 8px;
-  padding: 10px;
-  color: #fff;
-  font-size: 13px;
   text-align: center;
 }
 
+/* Кнопки */
 .btn-primary {
   background: var(--primary);
   color: #fff;
@@ -121,12 +150,17 @@ body {
   padding: 10px 14px;
   font-weight: 700;
   cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:active {
+  background: var(--primary-hover);
 }
 
 .btn-secondary {
   width: 100%;
-  background: #202130;
-  border: 1px solid #2f3045;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: #fff;
   border-radius: 8px;
   padding: 10px;
@@ -161,6 +195,7 @@ body {
   white-space: nowrap;
 }
 
+/* Перемикач підгруп */
 .subgroup-switcher {
   display: flex;
   background: #171822;
@@ -188,6 +223,7 @@ body {
   color: #fff;
 }
 
+/* Картки занять */
 .day-header {
   font-size: 16px;
   font-weight: 800;
@@ -211,6 +247,64 @@ body {
   cursor: pointer;
 }
 
+/* МОДАЛЬНІ ВІКНА (ПОВЕРХ СТОРІНКИ З ЗАТЕМНЕННЯМ) */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.modal-content {
+  background: #171822;
+  border: 1px solid #28293d;
+  border-radius: 16px;
+  padding: 20px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-content h3 {
+  font-size: 18px;
+  font-weight: 800;
+  color: #ffffff;
+  margin-bottom: 4px;
+}
+
+.modal-content label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: -6px;
+}
+
+.modal-content input,
+.modal-content select {
+  width: 100%;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.modal-actions button {
+  flex: 1;
+  padding: 10px;
+}
+
 /* Нижнє закріплене меню */
 .bottom-nav {
   position: fixed;
@@ -221,6 +315,7 @@ body {
   max-width: 500px;
   background: rgba(18, 19, 28, 0.95);
   backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-top: 1px solid #232435;
   display: flex;
   justify-content: space-around;
@@ -259,7 +354,7 @@ body {
   padding: 30px 0;
 }
 
-/* --- СТИЛІ ВКЛАДКИ «УСПІШНІСТЬ» --- */
+/* СТИЛІ ВКЛАДКИ «УСПІШНІСТЬ» */
 .stats-summary-card {
   display: flex;
   align-items: center;

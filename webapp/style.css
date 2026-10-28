@@ -94,7 +94,7 @@ body {
   margin-bottom: 12px;
 }
 
-/* ТЕМНІ АКУРАТНІ ПОЛЯ ВВОДУ ТА ТЕКСТОВІ ОБЛАСТІ */
+/* ТЕМНІ ІНПУТИ ТА СЕЛЕКТИ */
 input[type="text"],
 input[type="datetime-local"],
 textarea,
@@ -247,7 +247,7 @@ textarea {
   cursor: pointer;
 }
 
-/* МОДАЛЬНІ ВІКНА (ПОВЕРХ СТОРІНКИ З ЗАТЕМНЕННЯМ) */
+/* МОДАЛЬНІ ВІКНА */
 .modal {
   position: fixed;
   inset: 0;
@@ -305,7 +305,7 @@ textarea {
   padding: 10px;
 }
 
-/* Нижнє закріплене меню */
+/* Нижнє меню */
 .bottom-nav {
   position: fixed;
   bottom: 0;

@@ -12,10 +12,10 @@ let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
-// Пріоритетний фільтр користувача: якщо встановлено — показується поверх усього
-let activeSearchRange = null; // { startNum: number, endNum: number, sStr: string, eStr: string }
+// Пріоритетний фільтр дат користувача
+let activeSearchRange = null; // { sStr: string, eStr: string }
 
-// Автоматична розстановка крапок при введенні
+// Автоматичне додавання крапок при введенні дати
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
   if (v.length > 8) v = v.substring(0, 8);
@@ -31,26 +31,7 @@ function maskDateInput(input) {
   input.value = formatted;
 }
 
-// 1. Перетворення рядка дати з бази у ціле число виду YYYYMMDD (наприклад, 20261028)
-function getDateNumber(str) {
-  if (!str) return 0;
-  const match = str.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-  if (!match) return 0;
-  const day = parseInt(match[1], 10);
-  const month = parseInt(match[2], 10);
-  const year = parseInt(match[3], 10);
-  return year * 10000 + month * 100 + day;
-}
-
-// 2. Отримання поточного числа YYYYMMDD для сьогоднішнього дня
-function getTodayNumber() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-  const day = now.getDate();
-  return year * 10000 + month * 100 + day;
-}
-
+// Запити до API з Telegram InitData
 async function apiRequest(endpoint, method = "GET", body = null) {
   const headers = {
     "X-Telegram-Init-Data": (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "",
@@ -104,7 +85,7 @@ async function init() {
 
   await refreshAllData();
 
-  // Фонова синхронізація без скидання поточного перегляду
+  // Автооновлення у фоні кожні 20 секунд
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
@@ -129,6 +110,7 @@ async function refreshAllData(isBackground = false) {
   }
 }
 
+// Завантаження розкладу: сервер за замовчуванням повертає розклад від CURRENT_DATE
 async function loadSchedule(isBackground = false) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -137,23 +119,24 @@ async function loadSchedule(isBackground = false) {
     container.innerHTML = "<p class='loading'>Завантаження розкладу...</p>";
   }
 
-  allScheduleData = await apiRequest("/api/schedule");
-  
-  if (!allScheduleData || allScheduleData.length === 0) {
-    await syncFullMonth();
-    return;
+  // Якщо активний фільтр користувача — запитуємо обраний діапазон, інакше дефолтний
+  if (activeSearchRange) {
+    allScheduleData = await apiRequest(`/api/schedule?sdate=${activeSearchRange.sStr}&edate=${activeSearchRange.eStr}`);
+  } else {
+    allScheduleData = await apiRequest("/api/schedule");
   }
 
-  // ПРІОРИТЕТ 1: Якщо користувач шукав діапазон — рендеримо тільки його!
-  if (activeSearchRange) {
-    renderFilteredSchedule(activeSearchRange.startNum, activeSearchRange.endNum, activeSearchRange.sStr, activeSearchRange.eStr);
-  } else {
-    // ПРІОРИТЕТ 2: Основний режим за замовчуванням — починаючи з поточного дня
-    showDefaultScheduleFromToday();
+  if (!allScheduleData || allScheduleData.length === 0) {
+    if (!activeSearchRange) {
+      await syncFullMonth();
+      return;
+    }
   }
+
+  renderSchedule(allScheduleData);
 }
 
-// Основний режим: чітко з поточної календарної доби (сьогодні)
+// Повернення до основного розкладу (від сьогоднішнього дня)
 function showDefaultScheduleFromToday() {
   activeSearchRange = null;
 
@@ -163,45 +146,12 @@ function showDefaultScheduleFromToday() {
   if (eInput) eInput.value = "";
 
   const title = document.getElementById("schedule-view-title");
-  if (title) title.innerText = "Розклад: від сьогодні на найближчі дні";
+  if (title) title.innerText = "Розклад: на сьогодні та найближчі дні";
 
-  const todayNum = getTodayNumber();
-
-  // Вираховуємо кінець поточного тижня (неділю) у числовому форматі YYYYMMDD
-  const now = new Date();
-  const currentDay = now.getDay() === 0 ? 7 : now.getDay();
-  const daysUntilSunday = 7 - currentDay;
-  const sundayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilSunday);
-  const sundayNum = sundayDate.getFullYear() * 10000 + (sundayDate.getMonth() + 1) * 100 + sundayDate.getDate();
-
-  // Фільтруємо: СУВОРО пари, дата яких >= сьогодні (27 число відсікається математично: 20261027 < 20261028)
-  let upcomingLessons = allScheduleData.filter(item => {
-    const itemNum = getDateNumber(item.date_str);
-    return itemNum >= todayNum && itemNum <= sundayNum;
-  });
-
-  // Якщо на залишок тижня занять більше немає, беремо найближчі 7 днів починаючи від сьогодні
-  if (upcomingLessons.length === 0) {
-    const nextWeekDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7);
-    const nextWeekNum = nextWeekDate.getFullYear() * 10000 + (nextWeekDate.getMonth() + 1) * 100 + nextWeekDate.getDate();
-
-    upcomingLessons = allScheduleData.filter(item => {
-      const itemNum = getDateNumber(item.date_str);
-      return itemNum >= todayNum && itemNum <= nextWeekNum;
-    });
-  }
-
-  // Якщо й далі порожньо — показуємо будь-які майбутні пари (але жодної минулої!)
-  if (upcomingLessons.length === 0) {
-    upcomingLessons = allScheduleData.filter(item => {
-      return getDateNumber(item.date_str) >= todayNum;
-    });
-  }
-
-  renderSchedule(upcomingLessons);
+  loadSchedule();
 }
 
-// Запит користувача: стає пріоритетним поверх основного розкладу
+// Запит діапазону користувача (має абсолютний пріоритет над дефолтним)
 async function applyLocalDateFilter() {
   const sdateStr = document.getElementById("filter-sdate").value.trim();
   const edateStr = document.getElementById("filter-edate").value.trim();
@@ -211,112 +161,71 @@ async function applyLocalDateFilter() {
     return;
   }
 
-  const startNum = getDateNumber(sdateStr);
-  const endNum = getDateNumber(edateStr);
-
-  if (!startNum || !endNum) {
-    alert("Введіть повні дати формату дд.мм.рррр");
+  if (sdateStr.length < 10 || edateStr.length < 10) {
+    alert("Будь ласка, введіть повні дати формату дд.мм.рррр");
     return;
   }
 
-  // Встановлюємо активний пріоритет пошуку
-  activeSearchRange = {
-    startNum: startNum,
-    endNum: endNum,
-    sStr: sdateStr,
-    eStr: edateStr
-  };
+  activeSearchRange = { sStr: sdateStr, eStr: edateStr };
 
   const container = document.getElementById("schedule-list");
   if (container) {
-    container.innerHTML = "<p class='loading'>Отримання розкладу за обраний період...</p>";
+    container.innerHTML = "<p class='loading'>Отримання розкладу з сервера...</p>";
   }
 
   try {
-    // Звернення до сервера для підвантаження діапазону в БД
-    await apiRequest("/api/schedule/fetch_range", "POST", {
-      sdate: sdateStr,
-      edate: edateStr
-    });
+    // Підвантажуємо дані через деканат у базу, якщо їх там ще немає
+    await apiRequest("/api/schedule/fetch_range", "POST", { sdate: sdateStr, edate: edateStr });
 
-    allScheduleData = await apiRequest("/api/schedule");
-    renderFilteredSchedule(startNum, endNum, sdateStr, edateStr);
+    // Отримуємо відфільтровані сервером пари
+    allScheduleData = await apiRequest(`/api/schedule?sdate=${sdateStr}&edate=${edateStr}`);
+
+    const title = document.getElementById("schedule-view-title");
+    if (title) title.innerText = `Розклад: ${sdateStr} — ${edateStr}`;
+
+    renderSchedule(allScheduleData);
   } catch (err) {
     alert("Помилка завантаження: " + err.message);
     showDefaultScheduleFromToday();
   }
 }
 
-// Відображення пріоритетного результату пошуку через числове порівняння
-function renderFilteredSchedule(startNum, endNum, sdateStr = "", edateStr = "") {
-  const container = document.getElementById("schedule-list");
-  if (!container) return;
-
-  const filtered = allScheduleData.filter(item => {
-    const itemNum = getDateNumber(item.date_str);
-    if (!itemNum) return false;
-    return itemNum >= startNum && itemNum <= endNum;
-  });
-
-  const title = document.getElementById("schedule-view-title");
-  if (title) {
-    title.innerText = `Розклад: ${sdateStr || '...'} — ${edateStr || '...'}`;
-  }
-
-  if (filtered.length === 0) {
-    container.innerHTML = `<p class='text-muted'>За період з ${sdateStr || '...'} по ${edateStr || '...'} занять не знайдено.</p>`;
-    return;
-  }
-
-  renderSchedule(filtered);
-}
-
-// Перемикач підгруп (не збиває активний пошук)
+// Перемикач підгруп для старости (зберігає активний період)
 function switchStarostaViewSubgroup(subgroup, btn) {
   selectedSubgroupFilter = subgroup;
   document.querySelectorAll(".sg-btn").forEach(b => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
-  
-  if (activeSearchRange) {
-    renderFilteredSchedule(activeSearchRange.startNum, activeSearchRange.endNum, activeSearchRange.sStr, activeSearchRange.eStr);
-  } else {
-    showDefaultScheduleFromToday();
-  }
+  renderSchedule(allScheduleData);
 }
 
+// Синхронізація розкладу на місяць вперед
 async function syncFullMonth() {
   const container = document.getElementById("schedule-list");
   if (container) container.innerHTML = "<p class='loading'>🔄 Кешування розкладу на місяць вперед...</p>";
 
   try {
     await apiRequest("/api/schedule/sync_month", "POST");
-    allScheduleData = await apiRequest("/api/schedule");
-    
-    if (activeSearchRange) {
-      renderFilteredSchedule(activeSearchRange.startNum, activeSearchRange.endNum, activeSearchRange.sStr, activeSearchRange.eStr);
-    } else {
-      showDefaultScheduleFromToday();
-    }
-
+    await loadSchedule();
     if (tg && tg.showPopup) {
-      tg.showPopup({ message: "Розклад успішно закешовано на місяць наперед!" });
+      tg.showPopup({ message: "Розклад закешовано на місяць наперед!" });
     }
   } catch (err) {
-    alert("Помилка завантаження: " + err.message);
+    alert("Помилка синхронізації: " + err.message);
   }
 }
 
+// Рендеринг карток пар
 function renderSchedule(lessonsList) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
   container.innerHTML = "";
 
-  let visibleLessons = lessonsList;
+  let visibleLessons = lessonsList || [];
   if (currentUser && currentUser.role === "starosta" && selectedSubgroupFilter !== 0) {
-    visibleLessons = lessonsList.filter(l => l.target_subgroup === 0 || l.target_subgroup === selectedSubgroupFilter);
+    visibleLessons = visibleLessons.filter(l => l.target_subgroup === 0 || l.target_subgroup === selectedSubgroupFilter);
   }
 
-  if (!visibleLessons || visibleLessons.length === 0) {
+  if (visibleLessons.length === 0) {
     container.innerHTML = "<p class='text-muted'>Занять на обрані дні не знайдено.</p>";
     return;
   }
@@ -375,7 +284,7 @@ function renderSchedule(lessonsList) {
   }
 }
 
-// Статистика студента
+// Персональна статистика з сегментованим Conic-Gradient кільцем
 async function loadMyStats() {
   try {
     const data = await apiRequest("/api/my_stats");
@@ -388,11 +297,20 @@ async function loadMyStats() {
 
     const percent = total > 0 ? Math.round((present / total) * 100) : 100;
 
-    document.getElementById("stat-percent").innerText = `${percent}%`;
-    document.getElementById("stat-pres").innerText = present;
-    document.getElementById("stat-abs").innerText = absent;
-    document.getElementById("stat-late").innerText = late;
-    document.getElementById("stat-exc").innerText = excused;
+    const statPercent = document.getElementById("stat-percent");
+    if (statPercent) statPercent.innerText = `${percent}%`;
+
+    const statPres = document.getElementById("stat-pres");
+    if (statPres) statPres.innerText = present;
+
+    const statAbs = document.getElementById("stat-abs");
+    if (statAbs) statAbs.innerText = absent;
+
+    const statLate = document.getElementById("stat-late");
+    if (statLate) statLate.innerText = late;
+
+    const statExc = document.getElementById("stat-exc");
+    if (statExc) statExc.innerText = excused;
 
     const ring = document.getElementById("stat-multicolor-ring");
     if (ring) {
@@ -450,7 +368,7 @@ async function loadMyStats() {
   }
 }
 
-// Журнал відвідуваності
+// Модальне вікно журналу пари
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -511,7 +429,7 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
-// Звіт групи для старости
+// Зведений звіт групи для старости
 async function loadGroupStats() {
   const container = document.getElementById("group-stats-table-container");
   if (!container) return;
@@ -553,6 +471,7 @@ async function loadGroupStats() {
   }
 }
 
+// Вивантаження звіту в CSV
 async function downloadAttendanceReport() {
   const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "";
   try {
@@ -575,6 +494,7 @@ async function downloadAttendanceReport() {
   }
 }
 
+// Оголошення
 async function loadAnnouncements() {
   const container = document.getElementById("announcements-list");
   if (!container) return;
@@ -621,6 +541,7 @@ async function sendBroadcastMessage() {
   await loadAnnouncements();
 }
 
+// Керування складом групи для старости
 async function loadGroupManagement() {
   try {
     const students = await apiRequest("/api/group/students");
@@ -657,6 +578,7 @@ async function changeSubgroup(tgId, newSg) {
   });
 }
 
+// Профіль користувача
 function openProfileModal() {
   const modal = document.getElementById("profile-modal");
   if (!modal) return;
@@ -696,6 +618,7 @@ async function saveProfile() {
   await loadSchedule();
 }
 
+// Навігація вкладками
 function switchTab(tabId, btn) {
   document.querySelectorAll(".tab-pane").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));

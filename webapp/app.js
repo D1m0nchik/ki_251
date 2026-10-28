@@ -31,6 +31,7 @@ function maskDateInput(input) {
   input.value = formatted;
 }
 
+// Запити до API з Telegram InitData
 async function apiRequest(endpoint, method = "GET", body = null) {
   const headers = {
     "X-Telegram-Init-Data": (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "",
@@ -84,6 +85,7 @@ async function init() {
 
   await refreshAllData();
 
+  // Автооновлення у фоні кожні 20 секунд (тихе)
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
@@ -108,7 +110,7 @@ async function refreshAllData(isBackground = false) {
   }
 }
 
-// Завантаження розкладу з урахуванням пріоритетного діапазону
+// Завантаження розкладу
 async function loadSchedule(isBackground = false) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -117,7 +119,7 @@ async function loadSchedule(isBackground = false) {
     container.innerHTML = "<p class='loading'>Завантаження розкладу...</p>";
   }
 
-  // Якщо активний діапазон дат користувача — формуємо URL з параметрами
+  // Якщо активний діапазон дат користувача — запитуємо суто його
   let url = "/api/schedule";
   if (activeSearchRange && activeSearchRange.sStr && activeSearchRange.eStr) {
     url = `/api/schedule?sdate=${encodeURIComponent(activeSearchRange.sStr)}&edate=${encodeURIComponent(activeSearchRange.eStr)}`;
@@ -135,7 +137,7 @@ async function loadSchedule(isBackground = false) {
   renderSchedule(allScheduleData);
 }
 
-// Скидання до основного розкладу (від сьогоднішнього дня)
+// Повернення до основного розкладу (від сьогоднішнього дня)
 function showDefaultScheduleFromToday() {
   activeSearchRange = null;
 
@@ -150,7 +152,7 @@ function showDefaultScheduleFromToday() {
   loadSchedule();
 }
 
-// Пошук за діапазоном дат (абсолютний пріоритет)
+// Запит користувача за діапазоном (абсолютний пріоритет)
 async function applyLocalDateFilter() {
   const sdateStr = document.getElementById("filter-sdate").value.trim();
   const edateStr = document.getElementById("filter-edate").value.trim();
@@ -165,6 +167,7 @@ async function applyLocalDateFilter() {
     return;
   }
 
+  // Фіксуємо пріоритетний діапазон
   activeSearchRange = { sStr: sdateStr, eStr: edateStr };
 
   const container = document.getElementById("schedule-list");
@@ -173,12 +176,11 @@ async function applyLocalDateFilter() {
   }
 
   try {
-    // 1. Зберігаємо дні з сайту університету в БД (якщо їх ще немає)
-    await apiRequest("/api/schedule/fetch_range", "POST", { sdate: sdateStr, edate: edateStr });
-
-    // 2. Робимо запит за діапазоном
-    const url = `/api/schedule?sdate=${encodeURIComponent(sdateStr)}&edate=${encodeURIComponent(edateStr)}`;
-    allScheduleData = await apiRequest(url);
+    // Відправляємо запит і ОДРАЗУ отримуємо готовий відфільтрований розклад з бекенду
+    allScheduleData = await apiRequest("/api/schedule/fetch_range", "POST", { 
+      sdate: sdateStr, 
+      edate: edateStr 
+    });
 
     const title = document.getElementById("schedule-view-title");
     if (title) title.innerText = `Розклад: ${sdateStr} — ${edateStr}`;
@@ -190,6 +192,7 @@ async function applyLocalDateFilter() {
   }
 }
 
+// Перемикач підгруп для старости
 function switchStarostaViewSubgroup(subgroup, btn) {
   selectedSubgroupFilter = subgroup;
   document.querySelectorAll(".sg-btn").forEach(b => b.classList.remove("active"));
@@ -197,6 +200,7 @@ function switchStarostaViewSubgroup(subgroup, btn) {
   renderSchedule(allScheduleData);
 }
 
+// Синхронізація розкладу на місяць вперед
 async function syncFullMonth() {
   const container = document.getElementById("schedule-list");
   if (container) container.innerHTML = "<p class='loading'>🔄 Кешування розкладу на місяць вперед...</p>";
@@ -212,6 +216,7 @@ async function syncFullMonth() {
   }
 }
 
+// Рендеринг списку пар
 function renderSchedule(lessonsList) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -281,7 +286,7 @@ function renderSchedule(lessonsList) {
   }
 }
 
-// Персональна статистика
+// Персональна статистика з кільцевою діаграмою
 async function loadMyStats() {
   try {
     const data = await apiRequest("/api/my_stats");

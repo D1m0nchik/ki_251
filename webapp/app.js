@@ -12,10 +12,10 @@ let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
-// Пріоритетний фільтр дат користувача
+// Пріоритетний фільтр діапазону користувача
 let activeSearchRange = null; // { sStr: string, eStr: string }
 
-// Автоматичне додавання крапок при введенні дати
+// Автоматичне додавання крапок при введенні
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
   if (v.length > 8) v = v.substring(0, 8);
@@ -31,7 +31,6 @@ function maskDateInput(input) {
   input.value = formatted;
 }
 
-// Запити до API з Telegram InitData
 async function apiRequest(endpoint, method = "GET", body = null) {
   const headers = {
     "X-Telegram-Init-Data": (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "",
@@ -85,7 +84,6 @@ async function init() {
 
   await refreshAllData();
 
-  // Автооновлення у фоні кожні 20 секунд
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
@@ -110,7 +108,7 @@ async function refreshAllData(isBackground = false) {
   }
 }
 
-// Завантаження розкладу: сервер за замовчуванням повертає розклад від CURRENT_DATE
+// Завантаження розкладу з урахуванням пріоритетного діапазону
 async function loadSchedule(isBackground = false) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -119,12 +117,13 @@ async function loadSchedule(isBackground = false) {
     container.innerHTML = "<p class='loading'>Завантаження розкладу...</p>";
   }
 
-  // Якщо активний фільтр користувача — запитуємо обраний діапазон, інакше дефолтний
-  if (activeSearchRange) {
-    allScheduleData = await apiRequest(`/api/schedule?sdate=${activeSearchRange.sStr}&edate=${activeSearchRange.eStr}`);
-  } else {
-    allScheduleData = await apiRequest("/api/schedule");
+  // Якщо активний діапазон дат користувача — формуємо URL з параметрами
+  let url = "/api/schedule";
+  if (activeSearchRange && activeSearchRange.sStr && activeSearchRange.eStr) {
+    url = `/api/schedule?sdate=${encodeURIComponent(activeSearchRange.sStr)}&edate=${encodeURIComponent(activeSearchRange.eStr)}`;
   }
+
+  allScheduleData = await apiRequest(url);
 
   if (!allScheduleData || allScheduleData.length === 0) {
     if (!activeSearchRange) {
@@ -136,7 +135,7 @@ async function loadSchedule(isBackground = false) {
   renderSchedule(allScheduleData);
 }
 
-// Повернення до основного розкладу (від сьогоднішнього дня)
+// Скидання до основного розкладу (від сьогоднішнього дня)
 function showDefaultScheduleFromToday() {
   activeSearchRange = null;
 
@@ -151,7 +150,7 @@ function showDefaultScheduleFromToday() {
   loadSchedule();
 }
 
-// Запит діапазону користувача (має абсолютний пріоритет над дефолтним)
+// Пошук за діапазоном дат (абсолютний пріоритет)
 async function applyLocalDateFilter() {
   const sdateStr = document.getElementById("filter-sdate").value.trim();
   const edateStr = document.getElementById("filter-edate").value.trim();
@@ -170,15 +169,16 @@ async function applyLocalDateFilter() {
 
   const container = document.getElementById("schedule-list");
   if (container) {
-    container.innerHTML = "<p class='loading'>Отримання розкладу з сервера...</p>";
+    container.innerHTML = "<p class='loading'>Отримання розкладу за обраний період...</p>";
   }
 
   try {
-    // Підвантажуємо дані через деканат у базу, якщо їх там ще немає
+    // 1. Зберігаємо дні з сайту університету в БД (якщо їх ще немає)
     await apiRequest("/api/schedule/fetch_range", "POST", { sdate: sdateStr, edate: edateStr });
 
-    // Отримуємо відфільтровані сервером пари
-    allScheduleData = await apiRequest(`/api/schedule?sdate=${sdateStr}&edate=${edateStr}`);
+    // 2. Робимо запит за діапазоном
+    const url = `/api/schedule?sdate=${encodeURIComponent(sdateStr)}&edate=${encodeURIComponent(edateStr)}`;
+    allScheduleData = await apiRequest(url);
 
     const title = document.getElementById("schedule-view-title");
     if (title) title.innerText = `Розклад: ${sdateStr} — ${edateStr}`;
@@ -190,7 +190,6 @@ async function applyLocalDateFilter() {
   }
 }
 
-// Перемикач підгруп для старости (зберігає активний період)
 function switchStarostaViewSubgroup(subgroup, btn) {
   selectedSubgroupFilter = subgroup;
   document.querySelectorAll(".sg-btn").forEach(b => b.classList.remove("active"));
@@ -198,7 +197,6 @@ function switchStarostaViewSubgroup(subgroup, btn) {
   renderSchedule(allScheduleData);
 }
 
-// Синхронізація розкладу на місяць вперед
 async function syncFullMonth() {
   const container = document.getElementById("schedule-list");
   if (container) container.innerHTML = "<p class='loading'>🔄 Кешування розкладу на місяць вперед...</p>";
@@ -214,7 +212,6 @@ async function syncFullMonth() {
   }
 }
 
-// Рендеринг карток пар
 function renderSchedule(lessonsList) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -284,7 +281,7 @@ function renderSchedule(lessonsList) {
   }
 }
 
-// Персональна статистика з сегментованим Conic-Gradient кільцем
+// Персональна статистика
 async function loadMyStats() {
   try {
     const data = await apiRequest("/api/my_stats");
@@ -368,7 +365,7 @@ async function loadMyStats() {
   }
 }
 
-// Модальне вікно журналу пари
+// Журнал відвідуваності на пару
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -429,7 +426,7 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
-// Зведений звіт групи для старости
+// Загальна статистика для старости
 async function loadGroupStats() {
   const container = document.getElementById("group-stats-table-container");
   if (!container) return;
@@ -471,7 +468,6 @@ async function loadGroupStats() {
   }
 }
 
-// Вивантаження звіту в CSV
 async function downloadAttendanceReport() {
   const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "";
   try {
@@ -494,7 +490,6 @@ async function downloadAttendanceReport() {
   }
 }
 
-// Оголошення
 async function loadAnnouncements() {
   const container = document.getElementById("announcements-list");
   if (!container) return;
@@ -541,7 +536,6 @@ async function sendBroadcastMessage() {
   await loadAnnouncements();
 }
 
-// Керування складом групи для старости
 async function loadGroupManagement() {
   try {
     const students = await apiRequest("/api/group/students");
@@ -578,7 +572,6 @@ async function changeSubgroup(tgId, newSg) {
   });
 }
 
-// Профіль користувача
 function openProfileModal() {
   const modal = document.getElementById("profile-modal");
   if (!modal) return;
@@ -618,7 +611,6 @@ async function saveProfile() {
   await loadSchedule();
 }
 
-// Навігація вкладками
 function switchTab(tabId, btn) {
   document.querySelectorAll(".tab-pane").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));

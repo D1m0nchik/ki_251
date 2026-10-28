@@ -64,6 +64,7 @@ def verify_telegram_data(init_data: str) -> dict:
         }
 
 def linkify_telegram(text: str) -> str:
+    """Конвертує сирі URL-адреси у клікабельний HTML тег <a> для повідомлень бота."""
     url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+|t\.me/[^\s<>"]+)'
     def replace_url(match):
         url = match.group(0)
@@ -72,6 +73,7 @@ def linkify_telegram(text: str) -> str:
     return re.sub(url_pattern, replace_url, text)
 
 def get_reminder_keyboard(reminder_id: int):
+    """Клавіатура бота для відмітки виконання студентом прямо в чаті."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Я виконав", callback_data=f"done_reminder_{reminder_id}")]
     ])
@@ -118,6 +120,7 @@ async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str =
         """, data.full_name.strip(), data.subgroup, tg_id)
     return {"status": "ok"}
 
+# Безпечне вилучення дати навіть якщо в рядку міститься назва дня тижня
 SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str, 1, 10), 'DD.MM.YYYY')"
 
 @app.get("/api/schedule")
@@ -135,6 +138,7 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
 
+        # 1. Пріоритетний діапазон пошуку користувача
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -158,10 +162,12 @@ async def get_schedule(
                 rows = await conn.fetch(query, subgroup, s_clean, e_clean)
             return [dict(r) for r in rows]
 
+        # 2. Дефолтний режим за замовчуванням: строго від СЬОГОДНІ до КІНЦЯ ЦЬОГО ТИЖНЯ (неділі)
         if role == "starosta":
             query = f"""
                 SELECT * FROM schedule 
                 WHERE {SQL_DATE_CONVERT} >= CURRENT_DATE
+                  AND {SQL_DATE_CONVERT} <= (CURRENT_DATE + ((7 - EXTRACT(ISODOW FROM CURRENT_DATE))::int))
                 ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
             """
             rows = await conn.fetch(query)
@@ -170,6 +176,7 @@ async def get_schedule(
                 SELECT * FROM schedule 
                 WHERE target_subgroup IN (0, $1)
                   AND {SQL_DATE_CONVERT} >= CURRENT_DATE
+                  AND {SQL_DATE_CONVERT} <= (CURRENT_DATE + ((7 - EXTRACT(ISODOW FROM CURRENT_DATE))::int))
                 ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
             """
             rows = await conn.fetch(query, subgroup)
@@ -307,6 +314,7 @@ async def delete_reminder(reminder_id: int = Query(...), x_telegram_init_data: s
     return {"status": "ok"}
 
 async def background_reminder_notifier():
+    """Періодичний фоновий таск перевірки дедлайнів кожні 30 хвилин (тільки для боржників)."""
     while True:
         try:
             await asyncio.sleep(1800)

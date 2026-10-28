@@ -103,7 +103,11 @@ async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str =
     return {"status": "ok"}
 
 @app.get("/api/schedule")
-async def get_schedule(x_telegram_init_data: str = Header(...)):
+async def get_schedule(
+    sdate: str = "",
+    edate: str = "",
+    x_telegram_init_data: str = Header(...)
+):
     user = verify_telegram_data(x_telegram_init_data)
     tg_id = int(user.get("id"))
     
@@ -113,15 +117,44 @@ async def get_schedule(x_telegram_init_data: str = Header(...)):
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
         
-        # Староста отримує розклад обох підгруп (0, 1, 2)
+        # 1. Якщо користувач передав свій діапазон дат (sdate / edate)
+        if sdate and edate:
+            if role == "starosta":
+                query = """
+                    SELECT * FROM schedule 
+                    WHERE to_date(date_str, 'DD.MM.YYYY') >= to_date($1, 'DD.MM.YYYY')
+                      AND to_date(date_str, 'DD.MM.YYYY') <= to_date($2, 'DD.MM.YYYY')
+                    ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+                """
+                rows = await conn.fetch(query, sdate, edate)
+            else:
+                query = """
+                    SELECT * FROM schedule 
+                    WHERE target_subgroup IN (0, $1)
+                      AND to_date(date_str, 'DD.MM.YYYY') >= to_date($2, 'DD.MM.YYYY')
+                      AND to_date(date_str, 'DD.MM.YYYY') <= to_date($3, 'DD.MM.YYYY')
+                    ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+                """
+                rows = await conn.fetch(query, subgroup, sdate, edate)
+            return [dict(r) for r in rows]
+
+        # 2. ОСНОВНИЙ РЕЖИМ ЗА ЗАМОВЧУВАННЯМ: строго від СЬОГОДНІ і до неділі (кінця тижня)
+        # CURRENT_DATE в PostgreSQL бере поточний день і відкидає 27 число назавжди!
         if role == "starosta":
-            rows = await conn.fetch("SELECT * FROM schedule ORDER BY id ASC")
-        else:
-            rows = await conn.fetch("""
+            query = """
                 SELECT * FROM schedule 
-                WHERE target_subgroup IN (0, $1) 
-                ORDER BY id ASC
-            """, subgroup)
+                WHERE to_date(date_str, 'DD.MM.YYYY') >= CURRENT_DATE
+                ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+            """
+            rows = await conn.fetch(query)
+        else:
+            query = """
+                SELECT * FROM schedule 
+                WHERE target_subgroup IN (0, $1)
+                  AND to_date(date_str, 'DD.MM.YYYY') >= CURRENT_DATE
+                ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+            """
+            rows = await conn.fetch(query, subgroup)
 
         return [dict(r) for r in rows]
 

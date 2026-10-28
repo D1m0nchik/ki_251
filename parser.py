@@ -11,12 +11,9 @@ HEADERS = {
 }
 
 def determine_subgroup(text: str) -> int:
-    """Визначає підгрупу суто для конкретного фрагмента заняття."""
     low = text.lower()
-    # Перевірка 1 підгрупи
     if re.search(r"(?:підгр\.?|п\.?|підгрупа)\s*1\b|\b1\s*(?:підгр|підгрупа|п\.)", low):
         return 1
-    # Перевірка 2 підгрупи
     if re.search(r"(?:підгр\.?|п\.?|підгрупа)\s*2\b|\b2\s*(?:підгр|підгрупа|п\.)", low):
         return 2
     return 0
@@ -66,7 +63,6 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                     cell = cols[2]
                     p_names = cell.find_all("span", class_="p_name")
 
-                    # Якщо span.p_name відсутні, обробляємо комірку як один блок
                     if not p_names:
                         cell_raw = cell.get_text(" ", strip=True)
                         if not cell_raw:
@@ -82,7 +78,6 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                         """, date_str, day_of_week, lesson_num, time_start, time_end, cell_raw, subgroup)
                         continue
 
-                    # Якщо в одній парі кілька дисциплін/підгруп — збираємо кожен блок ізольовано
                     for p_name_span in p_names:
                         subject = p_name_span.get_text(strip=True)
                         subject = re.sub(r"Увага!\s*Заміна!.*?(замість:.*?)?(?=[А-ЯІЇЄ]|$)", "", subject, flags=re.IGNORECASE).strip()
@@ -96,7 +91,6 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
 
                         curr = p_name_span.next_sibling
                         while curr:
-                            # Якщо дійшли до наступного предмета у цій же клітинці — зупиняємось
                             if getattr(curr, "name", None) == "span" and "p_name" in curr.get("class", []):
                                 break
 
@@ -116,11 +110,9 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
 
                             curr = curr.next_sibling
 
-                        # Визначаємо підгрупу СУВОРО для цієї частини клітинки
                         combined_sub_text = " ".join(subgroup_text_acc)
                         target_subgroup = determine_subgroup(combined_sub_text)
 
-                        # Перевірка на заміну для цього блоку
                         is_replacement = False
                         replacement_note = None
                         if "заміна!" in combined_sub_text.lower() or "заміна!" in subject.lower():

@@ -102,10 +102,13 @@ async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str =
         """, data.full_name.strip(), data.subgroup, tg_id)
     return {"status": "ok"}
 
+from typing import Optional
+from fastapi import FastAPI, Header, HTTPException, Response, Query
+
 @app.get("/api/schedule")
 async def get_schedule(
-    sdate: str = "",
-    edate: str = "",
+    sdate: Optional[str] = Query(None),
+    edate: Optional[str] = Query(None),
     x_telegram_init_data: str = Header(...)
 ):
     user = verify_telegram_data(x_telegram_init_data)
@@ -117,8 +120,10 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
         
-        # 1. Пошуковий пріоритет користувача: вибірка строго в зазначеному діапазоні
-        if sdate and edate:
+        # 1. ПРІОРИТЕТНИЙ ПОШУК: якщо вказано діапазон sdate та edate
+        if sdate and edate and sdate.strip() != "" and edate.strip() != "":
+            s_clean = sdate.strip()
+            e_clean = edate.strip()
             if role == "starosta":
                 query = """
                     SELECT * FROM schedule 
@@ -126,7 +131,7 @@ async def get_schedule(
                       AND to_date(date_str, 'DD.MM.YYYY') <= to_date($2, 'DD.MM.YYYY')
                     ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
                 """
-                rows = await conn.fetch(query, sdate, edate)
+                rows = await conn.fetch(query, s_clean, e_clean)
             else:
                 query = """
                     SELECT * FROM schedule 
@@ -135,10 +140,10 @@ async def get_schedule(
                       AND to_date(date_str, 'DD.MM.YYYY') <= to_date($3, 'DD.MM.YYYY')
                     ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
                 """
-                rows = await conn.fetch(query, subgroup, sdate, edate)
+                rows = await conn.fetch(query, subgroup, s_clean, e_clean)
             return [dict(r) for r in rows]
 
-        # 2. Основний розклад: від сьогоднішнього дня
+        # 2. ОСНОВНИЙ РЕЖИМ ЗА ЗАМОВЧУВАННЯМ: від сьогодні (CURRENT_DATE)
         if role == "starosta":
             query = """
                 SELECT * FROM schedule 

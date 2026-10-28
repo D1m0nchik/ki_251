@@ -12,12 +12,10 @@ let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
-// Прапорець: чи переглядає користувач власний діапазон дат
-let isCustomDateView = false;
-let activeStartDate = null;
-let activeEndDate = null;
+// Пріоритетний фільтр користувача: якщо встановлено — показується поверх усього
+let activeSearchRange = null; // { start: Date, end: Date, sStr: string, eStr: string }
 
-// Автоматична розстановка крапок при введенні дати
+// Автоматична розстановка крапок при введенні
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
   if (v.length > 8) v = v.substring(0, 8);
@@ -92,15 +90,13 @@ async function init() {
     console.error("Init error:", err);
   }
 
-  // Первинне завантаження
   await refreshAllData();
 
-  // Фонове автооновлення кожні 20 секунд (тихе, без перебивання перегляду)
+  // Фонова синхронізація без скидання поточного перегляду
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
 
-  // Оновлення при поверненні у додаток
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       refreshAllData(true);
@@ -136,18 +132,18 @@ async function loadSchedule(isBackground = false) {
     return;
   }
 
-  // ГОЛОВНЕ ВИПРАВЛЕННЯ: якщо користувач вибрав свій діапазон — зберігаємо його перегляд!
-  if (isCustomDateView && activeStartDate && activeEndDate) {
-    renderFilteredSchedule(activeStartDate, activeEndDate);
+  // ПРІОРИТЕТ 1: Якщо користувач шукав діапазон — рендеримо тільки його!
+  if (activeSearchRange) {
+    renderFilteredSchedule(activeSearchRange.start, activeSearchRange.end, activeSearchRange.sStr, activeSearchRange.eStr);
   } else {
-    showCurrentWeekOnly();
+    // ПРІОРИТЕТ 2: Основний режим за замовчуванням — починаючи з поточного дня
+    showDefaultScheduleFromToday();
   }
 }
 
-function showCurrentWeekOnly() {
-  isCustomDateView = false;
-  activeStartDate = null;
-  activeEndDate = null;
+// Основний режим: розклад починаючи з сьогодні і до кінця тижня
+function showDefaultScheduleFromToday() {
+  activeSearchRange = null;
 
   const sInput = document.getElementById("filter-sdate");
   const eInput = document.getElementById("filter-edate");
@@ -155,34 +151,47 @@ function showCurrentWeekOnly() {
   if (eInput) eInput.value = "";
 
   const title = document.getElementById("schedule-view-title");
-  if (title) title.innerText = "Розклад на цей тиждень";
+  if (title) title.innerText = "Розклад: на сьогодні та найближчі дні";
 
   const now = new Date();
-  const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
-  
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - (dayOfWeek - 1));
-  monday.setHours(0, 0, 0, 0);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
 
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
+  // Кінець тижня (неділя 23:59:59)
+  const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
+  const daysUntilSunday = 7 - dayOfWeek;
+  
+  const sunday = new Date(today);
+  sunday.setDate(today.getDate() + daysUntilSunday);
   sunday.setHours(23, 59, 59, 999);
 
-  const weekLessons = allScheduleData.filter(item => {
+  // Фільтруємо: ТІЛЬКИ починаючи з сьогодні (минулі дні цього тижня відкидаються)
+  let upcomingLessons = allScheduleData.filter(item => {
     const d = parseCustomDate(item.date_str);
-    return d && d >= monday && d <= sunday;
+    return d && d >= today && d <= sunday;
   });
 
-  renderSchedule(weekLessons.length > 0 ? weekLessons : allScheduleData);
+  // Якщо сьогодні вихідний (або всі пари на цей тиждень пройшли), показуємо наступні 7 днів
+  if (upcomingLessons.length === 0) {
+    const nextWeekLimit = new Date(today);
+    nextWeekLimit.setDate(today.getDate() + 7);
+    nextWeekLimit.setHours(23, 59, 59, 999);
+
+    upcomingLessons = allScheduleData.filter(item => {
+      const d = parseCustomDate(item.date_str);
+      return d && d >= today && d <= nextWeekLimit;
+    });
+  }
+
+  renderSchedule(upcomingLessons.length > 0 ? upcomingLessons : allScheduleData);
 }
 
-// Завантаження розкладу за обраний користувачем діапазон
+// Запит користувача: стає пріоритетним поверх основного розкладу
 async function applyLocalDateFilter() {
   const sdateStr = document.getElementById("filter-sdate").value.trim();
   const edateStr = document.getElementById("filter-edate").value.trim();
 
   if (!sdateStr && !edateStr) {
-    showCurrentWeekOnly();
+    showDefaultScheduleFromToday();
     return;
   }
 
@@ -190,41 +199,42 @@ async function applyLocalDateFilter() {
   const endDate = parseCustomDate(edateStr);
 
   if (!startDate || !endDate) {
-    alert("Будь ласка, введіть повні дати формату дд.мм.рррр");
+    alert("Введіть повні дати формату дд.мм.рррр");
     return;
   }
 
   startDate.setHours(0, 0, 0, 0);
   endDate.setHours(23, 59, 59, 999);
 
-  // Фіксуємо активний режим перегляду діапазону
-  isCustomDateView = true;
-  activeStartDate = startDate;
-  activeEndDate = endDate;
+  // Встановлюємо активний пріоритет пошуку
+  activeSearchRange = {
+    start: startDate,
+    end: endDate,
+    sStr: sdateStr,
+    eStr: edateStr
+  };
 
   const container = document.getElementById("schedule-list");
   if (container) {
-    container.innerHTML = "<p class='loading'>Отримання розкладу з сервера деканату...</p>";
+    container.innerHTML = "<p class='loading'>Отримання розкладу за обраний період...</p>";
   }
 
   try {
-    // 1. Завантажуємо пари з сайту в базу
+    // Звернення до сервера для підвантаження діапазону в БД
     await apiRequest("/api/schedule/fetch_range", "POST", {
       sdate: sdateStr,
       edate: edateStr
     });
 
-    // 2. Отримуємо оновлений розклад з бази
     allScheduleData = await apiRequest("/api/schedule");
-
-    // 3. Відображаємо тільки обраний період
     renderFilteredSchedule(startDate, endDate, sdateStr, edateStr);
   } catch (err) {
-    alert("Не вдалося завантажити розклад: " + err.message);
-    showCurrentWeekOnly();
+    alert("Помилка завантаження: " + err.message);
+    showDefaultScheduleFromToday();
   }
 }
 
+// Відображення пріоритетного результату пошуку
 function renderFilteredSchedule(startDate, endDate, sdateStr = "", edateStr = "") {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -243,22 +253,23 @@ function renderFilteredSchedule(startDate, endDate, sdateStr = "", edateStr = ""
   }
 
   if (filtered.length === 0) {
-    container.innerHTML = `<p class='text-muted'>За обраний період занять в системі університету не знайдено.</p>`;
+    container.innerHTML = `<p class='text-muted'>За період з ${sdateStr || '...'} по ${edateStr || '...'} занять не знайдено.</p>`;
     return;
   }
 
   renderSchedule(filtered);
 }
 
+// Перемикач підгруп (не збиває активний пошук)
 function switchStarostaViewSubgroup(subgroup, btn) {
   selectedSubgroupFilter = subgroup;
   document.querySelectorAll(".sg-btn").forEach(b => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
   
-  if (isCustomDateView && activeStartDate && activeEndDate) {
-    renderFilteredSchedule(activeStartDate, activeEndDate);
+  if (activeSearchRange) {
+    renderFilteredSchedule(activeSearchRange.start, activeSearchRange.end, activeSearchRange.sStr, activeSearchRange.eStr);
   } else {
-    showCurrentWeekOnly();
+    showDefaultScheduleFromToday();
   }
 }
 
@@ -269,12 +280,18 @@ async function syncFullMonth() {
   try {
     await apiRequest("/api/schedule/sync_month", "POST");
     allScheduleData = await apiRequest("/api/schedule");
-    showCurrentWeekOnly();
+    
+    if (activeSearchRange) {
+      renderFilteredSchedule(activeSearchRange.start, activeSearchRange.end, activeSearchRange.sStr, activeSearchRange.eStr);
+    } else {
+      showDefaultScheduleFromToday();
+    }
+
     if (tg && tg.showPopup) {
       tg.showPopup({ message: "Розклад успішно закешовано на місяць наперед!" });
     }
   } catch (err) {
-    alert("Помилка завантаження з сервера деканату: " + err.message);
+    alert("Помилка завантаження: " + err.message);
   }
 }
 
@@ -347,7 +364,7 @@ function renderSchedule(lessonsList) {
   }
 }
 
-// Персональна статистика з кільцевою діаграмою
+// Статистика студента
 async function loadMyStats() {
   try {
     const data = await apiRequest("/api/my_stats");
@@ -422,7 +439,7 @@ async function loadMyStats() {
   }
 }
 
-// Завантаження журналу відвідуваності на конкретну пару
+// Журнал відвідуваності
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -483,7 +500,7 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
-// Зведена статистика групи (тільки для старости)
+// Звіт групи для старости
 async function loadGroupStats() {
   const container = document.getElementById("group-stats-table-container");
   if (!container) return;

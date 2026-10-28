@@ -150,6 +150,7 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
 
+        # 1. Пріоритетний діапазон пошуку (якщо користувач обрав період вручну)
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -173,23 +174,31 @@ async def get_schedule(
                 rows = await conn.fetch(query, subgroup, s_clean, e_clean)
             return [dict(r) for r in rows]
 
+        # 2. Дефолтний режим: обчислюємо дату за Києвом (ігноруючи UTC бази)
+        now_kyiv = datetime.now(KYIV_TZ).date()
+        days_to_sunday = 6 - now_kyiv.weekday()
+        sunday_kyiv = now_kyiv + timedelta(days=days_to_sunday)
+
+        today_str = now_kyiv.strftime("%d.%m.%Y")
+        sunday_str = sunday_kyiv.strftime("%d.%m.%Y")
+
         if role == "starosta":
             query = f"""
                 SELECT * FROM schedule 
-                WHERE {SQL_DATE_CONVERT} >= CURRENT_DATE
-                  AND {SQL_DATE_CONVERT} <= (CURRENT_DATE + ((7 - EXTRACT(ISODOW FROM CURRENT_DATE))::int))
+                WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
+                  AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
                 ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
             """
-            rows = await conn.fetch(query)
+            rows = await conn.fetch(query, today_str, sunday_str)
         else:
             query = f"""
                 SELECT * FROM schedule 
                 WHERE target_subgroup IN (0, $1)
-                  AND {SQL_DATE_CONVERT} >= CURRENT_DATE
-                  AND {SQL_DATE_CONVERT} <= (CURRENT_DATE + ((7 - EXTRACT(ISODOW FROM CURRENT_DATE))::int))
+                  AND {SQL_DATE_CONVERT} >= TO_DATE($2, 'DD.MM.YYYY')
+                  AND {SQL_DATE_CONVERT} <= TO_DATE($3, 'DD.MM.YYYY')
                 ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
             """
-            rows = await conn.fetch(query, subgroup)
+            rows = await conn.fetch(query, subgroup, today_str, sunday_str)
 
         return [dict(r) for r in rows]
 

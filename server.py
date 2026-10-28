@@ -6,10 +6,10 @@ import csv
 import io
 from urllib.parse import parse_qsl
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -102,8 +102,8 @@ async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str =
         """, data.full_name.strip(), data.subgroup, tg_id)
     return {"status": "ok"}
 
-from typing import Optional
-from fastapi import FastAPI, Header, HTTPException, Response, Query
+# Безпечне перетворення дати у базі даних без збоїв через текст дня тижня
+SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str FROM '([0-9]{2}\\.[0-9]{2}\\.[0-9]{4})'), 'DD.MM.YYYY')"
 
 @app.get("/api/schedule")
 async def get_schedule(
@@ -119,70 +119,65 @@ async def get_schedule(
         user_row = await conn.fetchrow("SELECT role, subgroup FROM users WHERE telegram_id = $1", tg_id)
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
-        
-        # 1. ПРІОРИТЕТНИЙ ПОШУК: якщо вказано діапазон sdate та edate
-        if sdate and edate and sdate.strip() != "" and edate.strip() != "":
-            s_clean = sdate.strip()
-            e_clean = edate.strip()
+
+        # 1. Пріоритетний діапазон дат від користувача
+        if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
+            s_clean = sdate.strip()[:10]
+            e_clean = edate.strip()[:10]
+            
             if role == "starosta":
-                query = """
+                query = f"""
                     SELECT * FROM schedule 
-                    WHERE to_date(date_str, 'DD.MM.YYYY') >= to_date($1, 'DD.MM.YYYY')
-                      AND to_date(date_str, 'DD.MM.YYYY') <= to_date($2, 'DD.MM.YYYY')
-                    ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+                    WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
+                      AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
+                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
                 rows = await conn.fetch(query, s_clean, e_clean)
             else:
-                query = """
+                query = f"""
                     SELECT * FROM schedule 
                     WHERE target_subgroup IN (0, $1)
-                      AND to_date(date_str, 'DD.MM.YYYY') >= to_date($2, 'DD.MM.YYYY')
-                      AND to_date(date_str, 'DD.MM.YYYY') <= to_date($3, 'DD.MM.YYYY')
-                    ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+                      AND {SQL_DATE_CONVERT} >= TO_DATE($2, 'DD.MM.YYYY')
+                      AND {SQL_DATE_CONVERT} <= TO_DATE($3, 'DD.MM.YYYY')
+                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
                 rows = await conn.fetch(query, subgroup, s_clean, e_clean)
             return [dict(r) for r in rows]
 
-        # 2. ОСНОВНИЙ РЕЖИМ ЗА ЗАМОВЧУВАННЯМ: від сьогодні (CURRENT_DATE)
+        # 2. Основний режим: чітко від поточної календарної доби (сьогодні) вперед
         if role == "starosta":
-            query = """
+            query = f"""
                 SELECT * FROM schedule 
-                WHERE to_date(date_str, 'DD.MM.YYYY') >= CURRENT_DATE
-                ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+                WHERE {SQL_DATE_CONVERT} >= CURRENT_DATE
+                ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
             """
             rows = await conn.fetch(query)
         else:
-            query = """
+            query = f"""
                 SELECT * FROM schedule 
                 WHERE target_subgroup IN (0, $1)
-                  AND to_date(date_str, 'DD.MM.YYYY') >= CURRENT_DATE
-                ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
+                  AND {SQL_DATE_CONVERT} >= CURRENT_DATE
+                ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
             """
             rows = await conn.fetch(query, subgroup)
 
         return [dict(r) for r in rows]
 
-        # 2. ОСНОВНИЙ РЕЖИМ ЗА ЗАМОВЧУВАННЯМ: строго від СЬОГОДНІ і до неділі (кінця тижня)
-        # CURRENT_DATE в PostgreSQL бере поточний день і відкидає 27 число назавжди!
-        if role == "starosta":
-            query = """
-                SELECT * FROM schedule 
-                WHERE to_date(date_str, 'DD.MM.YYYY') >= CURRENT_DATE
-                ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
-            """
-            rows = await conn.fetch(query)
-        else:
-            query = """
-                SELECT * FROM schedule 
-                WHERE target_subgroup IN (0, $1)
-                  AND to_date(date_str, 'DD.MM.YYYY') >= CURRENT_DATE
-                ORDER BY to_date(date_str, 'DD.MM.YYYY') ASC, lesson_number ASC
-            """
-            rows = await conn.fetch(query, subgroup)
+class DateRangeRequest(BaseModel):
+    sdate: str
+    edate: str
 
-        return [dict(r) for r in rows]
+@app.post("/api/schedule/fetch_range")
+async def fetch_schedule_range(data: DateRangeRequest, x_telegram_init_data: str = Header(...)):
+    # Завантажуємо в базу без видалення історії пар
+    await fetch_and_save_schedule(sdate=data.sdate.strip(), edate=data.edate.strip())
+    # Одразу повертаємо відфільтровані дні
+    return await get_schedule(
+        sdate=data.sdate.strip(), 
+        edate=data.edate.strip(), 
+        x_telegram_init_data=x_telegram_init_data
+    )
 
-# Автоматичний кеш розкладу на місяць вперед
 @app.post("/api/schedule/sync_month")
 async def sync_month_schedule():
     now = datetime.now()
@@ -190,16 +185,6 @@ async def sync_month_schedule():
     edate = (now + timedelta(days=30)).strftime("%d.%m.%Y")
     await fetch_and_save_schedule(sdate=sdate, edate=edate)
     return {"status": "success", "synced_from": sdate, "synced_to": edate}
-
-# Запит будь-якого довільного періоду розкладу (наприклад, минулі місяці)
-class DateRangeRequest(BaseModel):
-    sdate: str
-    edate: str
-
-@app.post("/api/schedule/fetch_range")
-async def fetch_schedule_range(data: DateRangeRequest):
-    await fetch_and_save_schedule(sdate=data.sdate.strip(), edate=data.edate.strip())
-    return {"status": "success"}
 
 @app.get("/api/group/students")
 async def get_all_group_students(x_telegram_init_data: str = Header(...)):

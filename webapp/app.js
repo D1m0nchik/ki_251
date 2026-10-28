@@ -591,6 +591,19 @@ async function downloadAttendanceReport() {
   }
 }
 
+// Перетворює будь-які знайдені URL-адреси на клікабельні теги <a>
+function formatMessageWithLinks(text) {
+  if (!text) return "";
+  const urlPattern = /(\b(https?:\/\/|www\.|t\.me\/)[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/gi;
+  return text.replace(urlPattern, (url) => {
+    let fullUrl = url;
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      fullUrl = "https://" + url;
+    }
+    return `<a href="${fullUrl}" target="_blank" rel="noopener noreferrer" style="color: #4bcffa; text-decoration: underline; word-break: break-all;">${url}</a>`;
+  });
+}
+
 async function loadAnnouncements() {
   const container = document.getElementById("announcements-list");
   if (!container) return;
@@ -607,12 +620,16 @@ async function loadAnnouncements() {
     list.forEach(item => {
       const card = document.createElement("div");
       card.className = "card";
+      
+      // Форматуємо повідомлення: робимо всі посилання клікабельними
+      const messageWithLinks = formatMessageWithLinks(item.message);
+
       card.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 6px;">
           <h4 style="margin:0; color: #ff6b81;">📢 ${item.title}</h4>
           <span style="font-size:11px; color:var(--text-muted);">${item.date_time || ''}</span>
         </div>
-        <p style="margin:0; font-size:14px; line-height:1.4; white-space: pre-wrap;">${item.message}</p>
+        <p style="margin:0; font-size:14px; line-height:1.4; white-space: pre-wrap;">${messageWithLinks}</p>
       `;
       container.appendChild(card);
     });

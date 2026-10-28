@@ -12,10 +12,8 @@ let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
-// Пріоритетний фільтр діапазону користувача
 let activeSearchRange = null; // { sStr: string, eStr: string }
 
-// Автоматичне додавання крапок при введенні
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
   if (v.length > 8) v = v.substring(0, 8);
@@ -31,7 +29,18 @@ function maskDateInput(input) {
   input.value = formatted;
 }
 
-// Запити до API з Telegram InitData
+function formatMessageWithLinks(text) {
+  if (!text) return "";
+  const urlPattern = /(\b(https?:\/\/|www\.|t\.me\/)[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/gi;
+  return text.replace(urlPattern, (url) => {
+    let fullUrl = url;
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      fullUrl = "https://" + url;
+    }
+    return `<a href="${fullUrl}" target="_blank" rel="noopener noreferrer" style="color: #4bcffa; text-decoration: underline; word-break: break-all;">${url}</a>`;
+  });
+}
+
 async function apiRequest(endpoint, method = "GET", body = null) {
   const headers = {
     "X-Telegram-Init-Data": (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "",
@@ -72,6 +81,9 @@ async function init() {
       const navGroupStatsBtn = document.getElementById("nav-group-stats-btn");
       if (navGroupStatsBtn) navGroupStatsBtn.style.display = "flex";
 
+      const deadlineBtn = document.getElementById("starosta-create-deadline-btn");
+      if (deadlineBtn) deadlineBtn.style.display = "block";
+
       loadGroupManagement().catch(e => console.error(e));
       loadGroupStats().catch(e => console.error(e));
     }
@@ -85,7 +97,6 @@ async function init() {
 
   await refreshAllData();
 
-  // Автооновлення у фоні кожні 20 секунд (тихе)
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
@@ -100,6 +111,7 @@ async function init() {
 async function refreshAllData(isBackground = false) {
   try {
     await loadSchedule(isBackground);
+    loadActiveReminders().catch(e => console.error(e));
     loadAnnouncements().catch(e => console.error(e));
     loadMyStats().catch(e => console.error(e));
     if (currentUser && currentUser.role === "starosta") {
@@ -110,7 +122,6 @@ async function refreshAllData(isBackground = false) {
   }
 }
 
-// Завантаження розкладу
 async function loadSchedule(isBackground = false) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -136,7 +147,6 @@ async function loadSchedule(isBackground = false) {
   renderSchedule(allScheduleData);
 }
 
-// Повернення до основного розкладу (від сьогоднішнього дня)
 function showDefaultScheduleFromToday() {
   activeSearchRange = null;
 
@@ -151,7 +161,6 @@ function showDefaultScheduleFromToday() {
   loadSchedule();
 }
 
-// Запит користувача за діапазоном (абсолютний пріоритет)
 async function applyLocalDateFilter() {
   const sdateStr = document.getElementById("filter-sdate").value.trim();
   const edateStr = document.getElementById("filter-edate").value.trim();
@@ -211,7 +220,6 @@ async function syncFullMonth() {
   }
 }
 
-// Рендеринг списку пар
 function renderSchedule(lessonsList) {
   const container = document.getElementById("schedule-list");
   if (!container) return;
@@ -281,7 +289,273 @@ function renderSchedule(lessonsList) {
   }
 }
 
-// Персональна статистика з кільцевою діаграмою
+async function loadActiveReminders() {
+  const banner = document.getElementById("active-deadline-banner");
+  if (!banner) return;
+
+  try {
+    const reminders = await apiRequest("/api/reminders/active");
+    if (!reminders || reminders.length === 0) {
+      banner.style.display = "none";
+      return;
+    }
+
+    banner.innerHTML = "";
+    banner.style.display = "flex";
+    banner.style.flexDirection = "column";
+    banner.style.gap = "10px";
+
+    const isStarosta = currentUser && currentUser.role === "starosta";
+
+    reminders.forEach(r => {
+      const isDone = r.is_completed_by_me;
+      const card = document.createElement("div");
+      const bgStyle = isDone
+        ? "background: rgba(46, 204, 113, 0.08); border: 1px solid rgba(46, 204, 113, 0.25); border-left: 4px solid #2ecc71;"
+        : "background: linear-gradient(135deg, rgba(255, 71, 87, 0.12), rgba(255, 107, 129, 0.04)); border: 1px solid rgba(255, 71, 87, 0.35); border-left: 4px solid #ff4757;";
+      
+      card.style.cssText = `${bgStyle} border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; box-sizing: border-box;`;
+
+      const descHtml = r.description ? `<p style="margin: 0; font-size: 13px; color: #dcdde1; line-height: 1.4;">${formatMessageWithLinks(r.description)}</p>` : "";
+      const deleteBtn = isStarosta ? `<button onclick="deleteReminderItem(${r.id})" style="background: none; border: none; color: #8e8ea0; font-size: 14px; cursor: pointer; padding: 0 4px;">✕</button>` : "";
+
+      const completeBtnText = isDone ? "✅ Виконано (зняти)" : "🔘 Я виконав";
+      const completeBtnStyle = isDone
+        ? "background: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid #2ecc71;"
+        : "background: #202130; color: #fff; border: 1px solid #2f3045;";
+
+      const completedCountHtml = isStarosta 
+        ? `<span style="font-size: 11px; color: #8e8ea0; align-self: center;">Здали: <b>${r.completed_count || 0}</b></span>` 
+        : "";
+
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+          <strong style="color: ${isDone ? '#2ecc71' : '#ff6b81'}; font-size: 15px;">
+            ${isDone ? '✅' : '⏳'} ${r.title}
+          </strong>
+          ${deleteBtn}
+        </div>
+        ${descHtml}
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #8e8ea0; margin-top: 2px;">
+          <span>Відкрито: ${r.start_str}</span>
+          <span style="color: ${isDone ? '#2ecc71' : '#ff4757'}; font-weight: bold;">Дедлайн: ${r.deadline_str}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 6px; gap: 8px;">
+          <button onclick="toggleReminderComplete(${r.id})" style="${completeBtnStyle} padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;">
+            ${completeBtnText}
+          </button>
+          ${completedCountHtml}
+        </div>
+      `;
+      banner.appendChild(card);
+    });
+  } catch (e) {
+    console.error("Помилка завантаження нагадувань:", e);
+  }
+}
+
+async function toggleReminderComplete(reminderId) {
+  try {
+    const res = await apiRequest(`/api/reminders/complete?reminder_id=${reminderId}`, "POST");
+    await loadActiveReminders();
+    if (tg && tg.showPopup) {
+      const msg = res.completed 
+        ? "Супер! Ви відмітили завдання як виконане. Нагадування вимкнено!" 
+        : "Позначку знято. Нагадування відновлено.";
+      tg.showPopup({ message: msg });
+    }
+  } catch (e) {
+    alert("Помилка: " + e.message);
+  }
+}
+
+function openReminderModal() {
+  const modal = document.getElementById("reminder-modal");
+  if (!modal) return;
+  modal.style.display = "flex";
+
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const nowStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  
+  const startInp = document.getElementById("rem-start");
+  if (startInp) startInp.value = nowStr;
+}
+
+function closeReminderModal() {
+  const modal = document.getElementById("reminder-modal");
+  if (modal) modal.style.display = "none";
+}
+
+async function saveReminder() {
+  const title = document.getElementById("rem-title").value.trim();
+  const desc = document.getElementById("rem-desc").value.trim();
+  const startAt = document.getElementById("rem-start").value;
+  const deadlineAt = document.getElementById("rem-deadline").value;
+
+  if (!title || !deadlineAt) {
+    alert("Будь ласка, вкажіть назву завдання та дату дедлайну!");
+    return;
+  }
+
+  try {
+    await apiRequest("/api/reminders/create", "POST", {
+      title,
+      description: desc,
+      start_at: startAt,
+      deadline_at: deadlineAt
+    });
+
+    closeReminderModal();
+    document.getElementById("rem-title").value = "";
+    document.getElementById("rem-desc").value = "";
+    document.getElementById("rem-deadline").value = "";
+
+    await loadActiveReminders();
+    if (tg && tg.showPopup) {
+      tg.showPopup({ message: "Дедлайн успішно створено та надіслано в групу!" });
+    } else {
+      alert("Дедлайн створено!");
+    }
+  } catch (err) {
+    alert("Помилка: " + err.message);
+  }
+}
+
+async function deleteReminderItem(id) {
+  if (!confirm("Видалити це нагадування?")) return;
+  await apiRequest(`/api/reminders/delete?reminder_id=${id}`, "POST");
+  await loadActiveReminders();
+}
+
+async function loadGroupManagement() {
+  try {
+    const students = await apiRequest("/api/group/students");
+    const container = document.getElementById("group-students-list");
+    if (!container) return;
+    container.innerHTML = "";
+
+    students.forEach(s => {
+      const card = document.createElement("div");
+      card.style.cssText = "background: #161722; border: 1px solid #232435; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;";
+
+      card.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <strong style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px;">${s.full_name}</strong>
+          <span style="font-size: 12px; color: #8e8ea0;">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</span>
+        </div>
+        <div>
+          <select onchange="changeSubgroup(${s.telegram_id}, this.value)" style="background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+            <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
+            <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
+          </select>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  } catch (e) {
+    console.error("Помилка завантаження студентів:", e);
+  }
+}
+
+async function changeSubgroup(tgId, newSg) {
+  await apiRequest("/api/group/change_subgroup", "POST", {
+    student_tg_id: tgId,
+    subgroup: parseInt(newSg)
+  });
+}
+
+async function loadGroupStats() {
+  const container = document.getElementById("group-stats-table-container");
+  if (!container) return;
+
+  try {
+    const data = await apiRequest("/api/group/stats");
+    container.innerHTML = "";
+
+    if (!data || data.length === 0) {
+      container.innerHTML = "<p style='color: #8e8ea0; font-size: 13px;'>Дані ще не накопичено.</p>";
+      return;
+    }
+
+    let totalRiskCount = 0;
+    const totalStudents = data.length;
+
+    let maxLessons = 0;
+    data.forEach(st => {
+      const checked = (st.present_count || 0) + (st.absent_count || 0) + (st.late_count || 0) + (st.excused_count || 0);
+      if (checked > maxLessons) maxLessons = checked;
+      if ((st.absent_count || 0) >= 3) {
+        totalRiskCount++;
+      }
+    });
+
+    if (maxLessons === 0) maxLessons = 1;
+
+    const riskElem = document.getElementById("metric-risk-count");
+    if (riskElem) riskElem.innerText = totalRiskCount;
+
+    const stElem = document.getElementById("metric-students-count");
+    if (stElem) stElem.innerText = totalStudents;
+
+    const lesElem = document.getElementById("metric-lessons-total");
+    if (lesElem) lesElem.innerText = maxLessons;
+
+    data.sort((a, b) => (b.absent_count || 0) - (a.absent_count || 0));
+
+    data.forEach(st => {
+      const pres = (st.present_count || 0) + (st.late_count || 0);
+      const abs = st.absent_count || 0;
+      const exc = st.excused_count || 0;
+      const totalStLessons = pres + abs + exc;
+      const baseline = totalStLessons > 0 ? totalStLessons : maxLessons;
+
+      const isRisk = abs >= 3;
+
+      const presWidth = ((pres / baseline) * 100).toFixed(1);
+      const absWidth = ((abs / baseline) * 100).toFixed(1);
+      const excWidth = ((exc / baseline) * 100).toFixed(1);
+
+      let badgesHtml = "";
+      if (isRisk) {
+        badgesHtml += `<span style="background: rgba(255, 71, 87, 0.18); color: #ff6b81; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">на межі · ${abs} проп.</span>`;
+      } else if (abs > 0) {
+        badgesHtml += `<span style="background: rgba(142, 142, 160, 0.15); color: #8e8ea0; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">${abs} проп.</span>`;
+      }
+
+      if (exc > 0) {
+        badgesHtml += `<span style="background: rgba(52, 152, 219, 0.18); color: #3498db; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">${exc} поваж.</span>`;
+      }
+
+      const card = document.createElement("div");
+      const borderLeft = isRisk ? "border-left: 3px solid #ff4757;" : "border-left: 1px solid #232435;";
+      card.style.cssText = `background: #161722; border: 1px solid #232435; ${borderLeft} border-radius: 14px; padding: 14px 18px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box;`;
+
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px;">${st.full_name}</span>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            ${badgesHtml}
+          </div>
+        </div>
+
+        <div style="width: 100%; height: 7px; background: #232435; border-radius: 4px; display: flex; overflow: hidden; margin-top: 4px;">
+          <div style="width: ${presWidth}%; background: #2ecc71; height: 100%;"></div>
+          <div style="width: ${absWidth}%; background: #ff4757; height: 100%;"></div>
+          <div style="width: ${excWidth}%; background: #3498db; height: 100%;"></div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; font-size: 12px; color: #8e8ea0; margin-top: 2px;">
+          <span>був ${pres} із ${baseline}</span>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  } catch (err) {
+    container.innerHTML = "<p style='color: #ff4757; font-size: 13px;'>Не вдалося завантажити статистику групи.</p>";
+  }
+}
+
 async function loadMyStats() {
   try {
     const data = await apiRequest("/api/my_stats");
@@ -365,7 +639,6 @@ async function loadMyStats() {
   }
 }
 
-// Журнал відвідуваності на пару
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -426,149 +699,6 @@ function closeAttendanceModal() {
   if (modal) modal.style.display = "none";
 }
 
-// -------------------------------------------------------------
-// 1. Зведена аналітика пропусків групи (в стилі скріншота)
-// -------------------------------------------------------------
-async function loadGroupStats() {
-  const container = document.getElementById("group-stats-table-container");
-  if (!container) return;
-
-  try {
-    const data = await apiRequest("/api/group/stats");
-    container.innerHTML = "";
-
-    if (!data || data.length === 0) {
-      container.innerHTML = "<p style='color: #8e8ea0; font-size: 13px;'>Дані ще не накопичено.</p>";
-      return;
-    }
-
-    let totalRiskCount = 0;
-    const totalStudents = data.length;
-
-    // Рахуємо максимальну кількість пар, які були відмічені старостою
-    let maxLessons = 0;
-    data.forEach(st => {
-      const checked = (st.present_count || 0) + (st.absent_count || 0) + (st.late_count || 0) + (st.excused_count || 0);
-      if (checked > maxLessons) maxLessons = checked;
-      // Поріг ризику: 3 і більше пропусків
-      if ((st.absent_count || 0) >= 3) {
-        totalRiskCount++;
-      }
-    });
-
-    if (maxLessons === 0) maxLessons = 1;
-
-    // Оновлюємо верхні 3 метрики
-    const riskElem = document.getElementById("metric-risk-count");
-    if (riskElem) riskElem.innerText = totalRiskCount;
-
-    const stElem = document.getElementById("metric-students-count");
-    if (stElem) stElem.innerText = totalStudents;
-
-    const lesElem = document.getElementById("metric-lessons-total");
-    if (lesElem) lesElem.innerText = maxLessons;
-
-    // Сортуємо: спочатку ті, хто має найбільше пропусків
-    data.sort((a, b) => (b.absent_count || 0) - (a.absent_count || 0));
-
-    // Рендеримо картку кожного студента
-    data.forEach(st => {
-      const pres = (st.present_count || 0) + (st.late_count || 0);
-      const abs = st.absent_count || 0;
-      const exc = st.excused_count || 0;
-      const totalStLessons = pres + abs + exc;
-      const baseline = totalStLessons > 0 ? totalStLessons : maxLessons;
-
-      const isRisk = abs >= 3;
-
-      // Рахуємо ширину сегментів для прогрес-бара у %
-      const presWidth = ((pres / baseline) * 100).toFixed(1);
-      const absWidth = ((abs / baseline) * 100).toFixed(1);
-      const excWidth = ((exc / baseline) * 100).toFixed(1);
-
-      // Формуємо бейджі праворуч
-      let badgesHtml = "";
-      if (isRisk) {
-        badgesHtml += `<span style="background: rgba(255, 71, 87, 0.18); color: #ff6b81; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">на межі · ${abs} проп.</span>`;
-      } else if (abs > 0) {
-        badgesHtml += `<span style="background: rgba(142, 142, 160, 0.15); color: #8e8ea0; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">${abs} проп.</span>`;
-      }
-
-      if (exc > 0) {
-        badgesHtml += `<span style="background: rgba(52, 152, 219, 0.18); color: #3498db; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap;">${exc} поваж.</span>`;
-      }
-
-      const card = document.createElement("div");
-      const borderLeft = isRisk ? "border-left: 3px solid #ff4757;" : "border-left: 1px solid #232435;";
-      card.style.cssText = `background: #161722; border: 1px solid #232435; ${borderLeft} border-radius: 14px; padding: 14px 18px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box;`;
-
-      card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px;">${st.full_name}</span>
-          <div style="display: flex; gap: 6px; align-items: center;">
-            ${badgesHtml}
-          </div>
-        </div>
-
-        <!-- Багатоколірний прогрес-бар -->
-        <div style="width: 100%; height: 7px; background: #232435; border-radius: 4px; display: flex; overflow: hidden; margin-top: 4px;">
-          <div style="width: ${presWidth}%; background: #2ecc71; height: 100%;"></div>
-          <div style="width: ${absWidth}%; background: #ff4757; height: 100%;"></div>
-          <div style="width: ${excWidth}%; background: #3498db; height: 100%;"></div>
-        </div>
-
-        <div style="display: flex; justify-content: flex-end; font-size: 12px; color: #8e8ea0; margin-top: 2px;">
-          <span>був ${pres} із ${baseline}</span>
-        </div>
-      `;
-      container.appendChild(card);
-    });
-  } catch (err) {
-    container.innerHTML = "<p style='color: #ff4757; font-size: 13px;'>Не вдалося завантажити статистику групи.</p>";
-  }
-}
-
-// -------------------------------------------------------------
-// 2. Керування складом групи (з правильними відступами всередині)
-// -------------------------------------------------------------
-async function loadGroupManagement() {
-  try {
-    const students = await apiRequest("/api/group/students");
-    const container = document.getElementById("group-students-list");
-    if (!container) return;
-    container.innerHTML = "";
-
-    students.forEach(s => {
-      const card = document.createElement("div");
-      // Відступи padding: 14px 16px запобігають прилипанню тексту до лівого краю
-      card.style.cssText = "background: #161722; border: 1px solid #232435; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;";
-
-      card.innerHTML = `
-        <div style="display: flex; flex-direction: column; gap: 4px;">
-          <strong style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px;">${s.full_name}</strong>
-          <span style="font-size: 12px; color: #8e8ea0;">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</span>
-        </div>
-        <div>
-          <select onchange="changeSubgroup(${s.telegram_id}, this.value)" style="background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
-            <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
-            <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
-          </select>
-        </div>
-      `;
-      container.appendChild(card);
-    });
-  } catch (e) {
-    console.error("Помилка завантаження студентів:", e);
-  }
-}
-
-async function changeSubgroup(tgId, newSg) {
-  await apiRequest("/api/group/change_subgroup", "POST", {
-    student_tg_id: tgId,
-    subgroup: parseInt(newSg)
-  });
-}
-
 async function downloadAttendanceReport() {
   const initData = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : "";
   try {
@@ -591,19 +721,6 @@ async function downloadAttendanceReport() {
   }
 }
 
-// Перетворює будь-які знайдені URL-адреси на клікабельні теги <a>
-function formatMessageWithLinks(text) {
-  if (!text) return "";
-  const urlPattern = /(\b(https?:\/\/|www\.|t\.me\/)[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/gi;
-  return text.replace(urlPattern, (url) => {
-    let fullUrl = url;
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      fullUrl = "https://" + url;
-    }
-    return `<a href="${fullUrl}" target="_blank" rel="noopener noreferrer" style="color: #4bcffa; text-decoration: underline; word-break: break-all;">${url}</a>`;
-  });
-}
-
 async function loadAnnouncements() {
   const container = document.getElementById("announcements-list");
   if (!container) return;
@@ -620,8 +737,6 @@ async function loadAnnouncements() {
     list.forEach(item => {
       const card = document.createElement("div");
       card.className = "card";
-      
-      // Форматуємо повідомлення: робимо всі посилання клікабельними
       const messageWithLinks = formatMessageWithLinks(item.message);
 
       card.innerHTML = `

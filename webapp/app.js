@@ -294,9 +294,23 @@ async function loadActiveReminders() {
   if (!banner) return;
 
   try {
-    const reminders = await apiRequest("/api/reminders/active");
-    if (!reminders || reminders.length === 0) {
+    const rawReminders = await apiRequest("/api/reminders/active");
+    if (!rawReminders || rawReminders.length === 0) {
       banner.style.display = "none";
+      banner.innerHTML = "";
+      return;
+    }
+
+    const nowTimestamp = new Date().getTime();
+    const reminders = rawReminders.filter(r => {
+      if (!r.deadline_at) return true;
+      const deadlineTimestamp = new Date(r.deadline_at).getTime();
+      return deadlineTimestamp > nowTimestamp;
+    });
+
+    if (reminders.length === 0) {
+      banner.style.display = "none";
+      banner.innerHTML = "";
       return;
     }
 
@@ -778,7 +792,7 @@ function openProfileModal() {
     const sgSelect = document.getElementById("profile-subgroup");
     if (sgSelect) sgSelect.value = currentUser.subgroup || 1;
   }
-  modal.style.display = "block";
+  modal.style.display = "flex";
 }
 
 function closeProfileModal() {

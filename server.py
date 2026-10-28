@@ -4,6 +4,7 @@ import hmac
 import hashlib
 import csv
 import io
+import re
 from urllib.parse import parse_qsl
 from pathlib import Path
 from typing import Dict, Optional
@@ -60,6 +61,17 @@ def verify_telegram_data(init_data: str) -> dict:
             "last_name": "Тест"
         }
 
+def linkify_telegram(text: str) -> str:
+    """Знаходить текстові URL та перетворює їх на клікабельні теги <a> для Telegram."""
+    url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+|t\.me/[^\s<>"]+)'
+    
+    def replace_url(match):
+        url = match.group(0)
+        href = url if url.startswith(("http://", "https://")) else f"https://{url}"
+        return f'<a href="{href}">{url}</a>'
+        
+    return re.sub(url_pattern, replace_url, text)
+
 @app.get("/api/user_data")
 async def get_user_data(x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)
@@ -102,8 +114,8 @@ async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str =
         """, data.full_name.strip(), data.subgroup, tg_id)
     return {"status": "ok"}
 
-# Безпечне перетворення дати у базі даних без збоїв через текст дня тижня
-SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str FROM '([0-9]{2}\\.[0-9]{2}\\.[0-9]{4})'), 'DD.MM.YYYY')"
+# Безпечне вилучення дати формату DD.MM.YYYY
+SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str, 1, 10), 'DD.MM.YYYY')"
 
 @app.get("/api/schedule")
 async def get_schedule(
@@ -120,7 +132,7 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
 
-        # 1. Пріоритетний діапазон дат від користувача
+        # 1. Пріоритетний пошуковий запит
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -144,7 +156,7 @@ async def get_schedule(
                 rows = await conn.fetch(query, subgroup, s_clean, e_clean)
             return [dict(r) for r in rows]
 
-        # 2. Основний режим: чітко від поточної календарної доби (сьогодні) вперед
+        # 2. Основний режим за замовчуванням (строго від сьогодні)
         if role == "starosta":
             query = f"""
                 SELECT * FROM schedule 
@@ -169,9 +181,7 @@ class DateRangeRequest(BaseModel):
 
 @app.post("/api/schedule/fetch_range")
 async def fetch_schedule_range(data: DateRangeRequest, x_telegram_init_data: str = Header(...)):
-    # Завантажуємо в базу без видалення історії пар
     await fetch_and_save_schedule(sdate=data.sdate.strip(), edate=data.edate.strip())
-    # Одразу повертаємо відфільтровані дні
     return await get_schedule(
         sdate=data.sdate.strip(), 
         edate=data.edate.strip(), 
@@ -414,11 +424,19 @@ async def broadcast_announcement(data: BroadcastRequest, x_telegram_init_data: s
         )
         students = await conn.fetch("SELECT telegram_id FROM users")
 
-    text = f"📢 <b>{data.title}</b>\n\n{data.message}\n\n<i>— Повідомлення від старости</i>"
+    # Конвертуємо всі знайдені посилання на клікабельні теги HTML для повідомлення в боті
+    formatted_message = linkify_telegram(data.message.strip())
+    text = f"📢 <b>{data.title.strip()}</b>\n\n{formatted_message}\n\n<i>— Повідомлення від старости</i>"
+    
     success_count = 0
     for s in students:
         try:
-            await bot.send_message(chat_id=s["telegram_id"], text=text, parse_mode="HTML")
+            await bot.send_message(
+                chat_id=s["telegram_id"], 
+                text=text, 
+                parse_mode="HTML",
+                disable_web_page_preview=False
+            )
             success_count += 1
         except Exception:
             pass

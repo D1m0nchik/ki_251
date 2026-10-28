@@ -13,7 +13,7 @@ let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
 // Пріоритетний фільтр користувача: якщо встановлено — показується поверх усього
-let activeSearchRange = null; // { start: Date, end: Date, sStr: string, eStr: string }
+let activeSearchRange = null; // { startNum: number, endNum: number, sStr: string, eStr: string }
 
 // Автоматична розстановка крапок при введенні
 function maskDateInput(input) {
@@ -31,13 +31,24 @@ function maskDateInput(input) {
   input.value = formatted;
 }
 
-// Надійне вилучення дати з рядка з очищенням годин (початок доби 00:00:00)
-function parseCustomDate(str) {
-  if (!str) return null;
-  const match = str.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-  if (!match) return null;
-  // Створюємо дату в локальному часі з нульовим часом
-  return new Date(parseInt(match[3], 10), parseInt(match[2], 10) - 1, parseInt(match[1], 10), 0, 0, 0, 0);
+// 1. Перетворення рядка дати з бази у ціле число виду YYYYMMDD (наприклад, 20261028)
+function getDateNumber(str) {
+  if (!str) return 0;
+  const match = str.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (!match) return 0;
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+  return year * 10000 + month * 100 + day;
+}
+
+// 2. Отримання поточного числа YYYYMMDD для сьогоднішнього дня
+function getTodayNumber() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  return year * 10000 + month * 100 + day;
 }
 
 async function apiRequest(endpoint, method = "GET", body = null) {
@@ -135,7 +146,7 @@ async function loadSchedule(isBackground = false) {
 
   // ПРІОРИТЕТ 1: Якщо користувач шукав діапазон — рендеримо тільки його!
   if (activeSearchRange) {
-    renderFilteredSchedule(activeSearchRange.start, activeSearchRange.end, activeSearchRange.sStr, activeSearchRange.eStr);
+    renderFilteredSchedule(activeSearchRange.startNum, activeSearchRange.endNum, activeSearchRange.sStr, activeSearchRange.eStr);
   } else {
     // ПРІОРИТЕТ 2: Основний режим за замовчуванням — починаючи з поточного дня
     showDefaultScheduleFromToday();
@@ -152,36 +163,38 @@ function showDefaultScheduleFromToday() {
   if (eInput) eInput.value = "";
 
   const title = document.getElementById("schedule-view-title");
-  if (title) title.innerText = "Розклад: на сьогодні та найближчі дні";
+  if (title) title.innerText = "Розклад: від сьогодні на найближчі дні";
 
-  // Сьогоднішня дата строго в 00:00:00:000 за локальним часом пристрою
+  const todayNum = getTodayNumber();
+
+  // Вираховуємо кінець поточного тижня (неділю) у числовому форматі YYYYMMDD
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const currentDay = now.getDay() === 0 ? 7 : now.getDay();
+  const daysUntilSunday = 7 - currentDay;
+  const sundayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilSunday);
+  const sundayNum = sundayDate.getFullYear() * 10000 + (sundayDate.getMonth() + 1) * 100 + sundayDate.getDate();
 
-  // Визначаємо кінець поточного тижня (неділя 23:59:59)
-  const currentDay = now.getDay(); // 0 - неділя, 1 - понеділок...
-  const daysUntilSunday = currentDay === 0 ? 0 : 7 - currentDay;
-  
-  const sunday = new Date(today);
-  sunday.setDate(today.getDate() + daysUntilSunday);
-  sunday.setHours(23, 59, 59, 999);
-
-  // Фільтруємо: СУВОРО пари, дата яких >= сьогодні
+  // Фільтруємо: СУВОРО пари, дата яких >= сьогодні (27 число відсікається математично: 20261027 < 20261028)
   let upcomingLessons = allScheduleData.filter(item => {
-    const d = parseCustomDate(item.date_str);
-    return d && d.getTime() >= today.getTime() && d.getTime() <= sunday.getTime();
+    const itemNum = getDateNumber(item.date_str);
+    return itemNum >= todayNum && itemNum <= sundayNum;
   });
 
-  // Якщо на залишок тижня занять немає (наприклад, п'ятниця вечір чи вихідні),
-  // показуємо наступні 7 днів вперед починаючи від сьогодні
+  // Якщо на залишок тижня занять більше немає, беремо найближчі 7 днів починаючи від сьогодні
   if (upcomingLessons.length === 0) {
-    const nextLimit = new Date(today);
-    nextLimit.setDate(today.getDate() + 7);
-    nextLimit.setHours(23, 59, 59, 999);
+    const nextWeekDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7);
+    const nextWeekNum = nextWeekDate.getFullYear() * 10000 + (nextWeekDate.getMonth() + 1) * 100 + nextWeekDate.getDate();
 
     upcomingLessons = allScheduleData.filter(item => {
-      const d = parseCustomDate(item.date_str);
-      return d && d.getTime() >= today.getTime() && d.getTime() <= nextLimit.getTime();
+      const itemNum = getDateNumber(item.date_str);
+      return itemNum >= todayNum && itemNum <= nextWeekNum;
+    });
+  }
+
+  // Якщо й далі порожньо — показуємо будь-які майбутні пари (але жодної минулої!)
+  if (upcomingLessons.length === 0) {
+    upcomingLessons = allScheduleData.filter(item => {
+      return getDateNumber(item.date_str) >= todayNum;
     });
   }
 
@@ -198,21 +211,18 @@ async function applyLocalDateFilter() {
     return;
   }
 
-  const startDate = parseCustomDate(sdateStr);
-  const endDate = parseCustomDate(edateStr);
+  const startNum = getDateNumber(sdateStr);
+  const endNum = getDateNumber(edateStr);
 
-  if (!startDate || !endDate) {
+  if (!startNum || !endNum) {
     alert("Введіть повні дати формату дд.мм.рррр");
     return;
   }
 
-  startDate.setHours(0, 0, 0, 0);
-  endDate.setHours(23, 59, 59, 999);
-
   // Встановлюємо активний пріоритет пошуку
   activeSearchRange = {
-    start: startDate,
-    end: endDate,
+    startNum: startNum,
+    endNum: endNum,
     sStr: sdateStr,
     eStr: edateStr
   };
@@ -230,29 +240,27 @@ async function applyLocalDateFilter() {
     });
 
     allScheduleData = await apiRequest("/api/schedule");
-    renderFilteredSchedule(startDate, endDate, sdateStr, edateStr);
+    renderFilteredSchedule(startNum, endNum, sdateStr, edateStr);
   } catch (err) {
     alert("Помилка завантаження: " + err.message);
     showDefaultScheduleFromToday();
   }
 }
 
-// Відображення пріоритетного результату пошуку
-function renderFilteredSchedule(startDate, endDate, sdateStr = "", edateStr = "") {
+// Відображення пріоритетного результату пошуку через числове порівняння
+function renderFilteredSchedule(startNum, endNum, sdateStr = "", edateStr = "") {
   const container = document.getElementById("schedule-list");
   if (!container) return;
 
   const filtered = allScheduleData.filter(item => {
-    const itemDate = parseCustomDate(item.date_str);
-    if (!itemDate) return false;
-    return itemDate >= startDate && itemDate <= endDate;
+    const itemNum = getDateNumber(item.date_str);
+    if (!itemNum) return false;
+    return itemNum >= startNum && itemNum <= endNum;
   });
 
   const title = document.getElementById("schedule-view-title");
   if (title) {
-    const sText = sdateStr || startDate.toLocaleDateString("uk-UA");
-    const eText = edateStr || endDate.toLocaleDateString("uk-UA");
-    title.innerText = `Розклад: ${sText} — ${eText}`;
+    title.innerText = `Розклад: ${sdateStr || '...'} — ${edateStr || '...'}`;
   }
 
   if (filtered.length === 0) {
@@ -270,7 +278,7 @@ function switchStarostaViewSubgroup(subgroup, btn) {
   if (btn) btn.classList.add("active");
   
   if (activeSearchRange) {
-    renderFilteredSchedule(activeSearchRange.start, activeSearchRange.end, activeSearchRange.sStr, activeSearchRange.eStr);
+    renderFilteredSchedule(activeSearchRange.startNum, activeSearchRange.endNum, activeSearchRange.sStr, activeSearchRange.eStr);
   } else {
     showDefaultScheduleFromToday();
   }
@@ -285,7 +293,7 @@ async function syncFullMonth() {
     allScheduleData = await apiRequest("/api/schedule");
     
     if (activeSearchRange) {
-      renderFilteredSchedule(activeSearchRange.start, activeSearchRange.end, activeSearchRange.sStr, activeSearchRange.eStr);
+      renderFilteredSchedule(activeSearchRange.startNum, activeSearchRange.endNum, activeSearchRange.sStr, activeSearchRange.eStr);
     } else {
       showDefaultScheduleFromToday();
     }

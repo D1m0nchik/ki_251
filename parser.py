@@ -1,5 +1,4 @@
 import re
-import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 from database import get_db_pool
@@ -12,21 +11,12 @@ HEADERS = {
 }
 
 async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
-    # Параметри для форми деканату ІФНТУНГ
-    params = {
-        "faculty": "1015",
-        "teacher": "",
-        "course": "0",
-        "group": "КІ-25-1",
-        "sdate": sdate.strip(),
-        "edate": edate.strip(),
-        "n": "700"
-    }
+    # Байт-код для 'КІ-25-1' у CP1251: \xca\xb2-25-1
+    # Складаємо payload вручну у CP1251:
+    group_encoded = "%CA%B2-25-1"
+    payload = f"faculty=1015&teacher=&course=0&group={group_encoded}&sdate={sdate.strip()}&edate={edate.strip()}&n=700"
 
-    # Кодуємо параметри виключно у CP1251, як вимагає сервер деканату
-    encoded_data = urllib.parse.urlencode(params, encoding="cp1251").encode("cp1251")
-    
-    response = requests.post(URL, data=encoded_data, headers=HEADERS, timeout=15)
+    response = requests.post(URL, data=payload.encode("ascii"), headers=HEADERS, timeout=20)
     html_text = response.content.decode("cp1251", errors="replace")
     
     soup = BeautifulSoup(html_text, "html.parser")
@@ -46,7 +36,6 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                 small_tag = h4.find("small")
                 day_of_week = small_tag.get_text(strip=True) if small_tag else ""
                 
-                # Залишаємо виключно дату виду DD.MM.YYYY
                 raw_date = h4.text.replace(day_of_week, "").strip()
                 date_match = re.search(r"\d{2}\.\d{2}\.\d{4}", raw_date)
                 date_str = date_match.group(0) if date_match else raw_date
@@ -70,7 +59,6 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = ""):
                     if not cell_raw_text:
                         continue
 
-                    # Заміна
                     is_replacement = False
                     replacement_note = None
                     rep_teacher = None

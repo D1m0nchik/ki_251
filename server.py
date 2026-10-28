@@ -5,15 +5,17 @@ import hashlib
 import csv
 import io
 import re
+import asyncio
 from urllib.parse import parse_qsl
 from pathlib import Path
 from typing import Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Header, HTTPException, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import get_db_pool
 from bot import bot
@@ -62,15 +64,17 @@ def verify_telegram_data(init_data: str) -> dict:
         }
 
 def linkify_telegram(text: str) -> str:
-    """Знаходить текстові URL та перетворює їх на клікабельні теги <a> для Telegram."""
     url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+|t\.me/[^\s<>"]+)'
-    
     def replace_url(match):
         url = match.group(0)
         href = url if url.startswith(("http://", "https://")) else f"https://{url}"
         return f'<a href="{href}">{url}</a>'
-        
     return re.sub(url_pattern, replace_url, text)
+
+def get_reminder_keyboard(reminder_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я виконав", callback_data=f"done_reminder_{reminder_id}")]
+    ])
 
 @app.get("/api/user_data")
 async def get_user_data(x_telegram_init_data: str = Header(...)):
@@ -114,7 +118,6 @@ async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str =
         """, data.full_name.strip(), data.subgroup, tg_id)
     return {"status": "ok"}
 
-# Безпечне вилучення дати формату DD.MM.YYYY
 SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str, 1, 10), 'DD.MM.YYYY')"
 
 @app.get("/api/schedule")
@@ -132,7 +135,6 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
 
-        # 1. Пріоритетний пошуковий запит
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -156,7 +158,6 @@ async def get_schedule(
                 rows = await conn.fetch(query, subgroup, s_clean, e_clean)
             return [dict(r) for r in rows]
 
-        # 2. Основний режим за замовчуванням (строго від сьогодні)
         if role == "starosta":
             query = f"""
                 SELECT * FROM schedule 
@@ -195,6 +196,170 @@ async def sync_month_schedule():
     edate = (now + timedelta(days=30)).strftime("%d.%m.%Y")
     await fetch_and_save_schedule(sdate=sdate, edate=edate)
     return {"status": "success", "synced_from": sdate, "synced_to": edate}
+
+class ReminderCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    start_at: Optional[str] = None
+    deadline_at: str
+
+@app.get("/api/reminders/active")
+async def get_active_reminders(x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    tg_id = int(user.get("id"))
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT r.id, r.title, r.description,
+                   to_char(r.start_at, 'DD.MM.YYYY HH24:MI') as start_str,
+                   to_char(r.deadline_at, 'DD.MM.YYYY HH24:MI') as deadline_str,
+                   r.deadline_at,
+                   r.is_active,
+                   (c.id IS NOT NULL) as is_completed_by_me,
+                   (SELECT COUNT(*) FROM reminder_completions rc WHERE rc.reminder_id = r.id) as completed_count
+            FROM reminders r
+            LEFT JOIN reminder_completions c ON c.reminder_id = r.id AND c.telegram_id = $1
+            WHERE r.is_active = TRUE AND r.deadline_at > NOW()
+            ORDER BY r.deadline_at ASC
+        """, tg_id)
+        return [dict(r) for r in rows]
+
+@app.post("/api/reminders/create")
+async def create_reminder(data: ReminderCreateRequest, x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Тільки староста може створювати нагадування")
+
+        try:
+            deadline_dt = datetime.fromisoformat(data.deadline_at.replace("Z", "+00:00"))
+        except Exception:
+            deadline_dt = datetime.strptime(data.deadline_at, "%Y-%m-%dT%H:%M")
+
+        start_dt = datetime.now(timezone.utc)
+        if data.start_at:
+            try:
+                start_dt = datetime.fromisoformat(data.start_at.replace("Z", "+00:00"))
+            except Exception:
+                start_dt = datetime.strptime(data.start_at, "%Y-%m-%dT%H:%M")
+
+        rem_row = await conn.fetchrow("""
+            INSERT INTO reminders (title, description, start_at, deadline_at)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+        """, data.title.strip(), data.description.strip(), start_dt, deadline_dt)
+        reminder_id = rem_row["id"]
+
+        students = await conn.fetch("SELECT telegram_id FROM users")
+
+    desc_block = f"{data.description.strip()}\n\n" if data.description.strip() else ""
+    text = (
+        f"⏳ <b>УВАГА! НОВИЙ ДЕДЛАЙН</b>\n\n"
+        f"📌 <b>{data.title.strip()}</b>\n"
+        f"{desc_block}"
+        f"🕒 <b>Дедлайн:</b> до {deadline_dt.strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"<i>Коли здасте роботу, натисніть кнопку нижче, щоб вимкнути автонагадування.</i>"
+    )
+
+    kb = get_reminder_keyboard(reminder_id)
+    for s in students:
+        try:
+            await bot.send_message(chat_id=s["telegram_id"], text=text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            pass
+
+    return {"status": "ok", "reminder_id": reminder_id}
+
+@app.post("/api/reminders/complete")
+async def toggle_complete_reminder(reminder_id: int = Query(...), x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    tg_id = int(user.get("id"))
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id FROM reminder_completions WHERE reminder_id = $1 AND telegram_id = $2",
+            reminder_id, tg_id
+        )
+        if row:
+            await conn.execute("DELETE FROM reminder_completions WHERE id = $1", row["id"])
+            return {"status": "ok", "completed": False}
+        else:
+            await conn.execute(
+                "INSERT INTO reminder_completions (reminder_id, telegram_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                reminder_id, tg_id
+            )
+            return {"status": "ok", "completed": True}
+
+@app.post("/api/reminders/delete")
+async def delete_reminder(reminder_id: int = Query(...), x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        await conn.execute("UPDATE reminders SET is_active = FALSE WHERE id = $1", reminder_id)
+    return {"status": "ok"}
+
+async def background_reminder_notifier():
+    while True:
+        try:
+            await asyncio.sleep(1800)
+            pool = await get_db_pool()
+            if not pool:
+                continue
+
+            async with pool.acquire() as conn:
+                active_reminders = await conn.fetch("""
+                    SELECT id, title, description, deadline_at
+                    FROM reminders
+                    WHERE is_active = TRUE
+                      AND deadline_at > NOW()
+                      AND deadline_at <= NOW() + INTERVAL '24 hours'
+                      AND (last_notified_at IS NULL OR last_notified_at <= NOW() - INTERVAL '6 hours')
+                """)
+
+                for r in active_reminders:
+                    debtors = await conn.fetch("""
+                        SELECT u.telegram_id 
+                        FROM users u
+                        LEFT JOIN reminder_completions rc 
+                          ON rc.telegram_id = u.telegram_id AND rc.reminder_id = $1
+                        WHERE rc.id IS NULL
+                    """, r["id"])
+
+                    if not debtors:
+                        continue
+
+                    d_str = r["deadline_at"].strftime('%d.%m.%Y %H:%M')
+                    desc_text = f"{r['description']}\n\n" if r['description'] else ""
+                    msg = (
+                        f"⏰ <b>НАГАДУВАННЯ ПРО ДЕДЛАЙН!</b>\n\n"
+                        f"📌 <b>{r['title']}</b>\n"
+                        f"Залишилося менше доби! Роботу потрібно здати до <b>{d_str}</b>.\n"
+                        f"{desc_text}"
+                        f"<i>Якщо ви вже виконали завдання — натисніть кнопку нижче:</i>"
+                    )
+                    kb = get_reminder_keyboard(r["id"])
+
+                    for s in debtors:
+                        try:
+                            await bot.send_message(chat_id=s["telegram_id"], text=msg, parse_mode="HTML", reply_markup=kb)
+                        except Exception:
+                            pass
+
+                    await conn.execute("UPDATE reminders SET last_notified_at = NOW() WHERE id = $1", r["id"])
+        except Exception as e:
+            print("Помилка нагадувача:", e)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(background_reminder_notifier())
 
 @app.get("/api/group/students")
 async def get_all_group_students(x_telegram_init_data: str = Header(...)):
@@ -424,7 +589,6 @@ async def broadcast_announcement(data: BroadcastRequest, x_telegram_init_data: s
         )
         students = await conn.fetch("SELECT telegram_id FROM users")
 
-    # Конвертуємо всі знайдені посилання на клікабельні теги HTML для повідомлення в боті
     formatted_message = linkify_telegram(data.message.strip())
     text = f"📢 <b>{data.title.strip()}</b>\n\n{formatted_message}\n\n<i>— Повідомлення від старости</i>"
     

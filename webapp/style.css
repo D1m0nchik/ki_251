@@ -1,669 +1,267 @@
 :root {
-  --bg-color: #121217;
-  --card-bg: #1e1e26;
-  --accent: #6c5ce7;
+  --bg-color: #0f1015;
+  --card-bg: #161722;
+  --card-border: #232435;
+  --text-main: #ffffff;
+  --text-muted: #8e8ea0;
+  --primary: #6c5ce7;
+  --primary-hover: #5b4bc4;
   --danger: #ff4757;
-  --text: #ffffff;
-  --text-muted: #8b8b9e;
+  --success: #2ecc71;
 }
 
 * {
   box-sizing: border-box;
-}
-
-html, body {
   margin: 0;
   padding: 0;
-  width: 100%;
-  height: 100%;
-  background-color: var(--bg-color);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  overflow-x: hidden;
-  overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
-  user-select: none;
 }
 
-button, select, input, textarea {
-  touch-action: manipulation;
-  font-family: inherit;
+body {
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
 }
 
+/* Головний контейнер з правильними боковими відступами */
 .app-container {
+  width: 100%;
+  max-width: 500px;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
+  position: relative;
+  padding: 16px 16px 85px 16px; /* 85px знизу щоб контент не перекривався нижнім меню */
 }
 
-/* Хедер */
-.header {
-  padding: 14px 16px;
+/* Верхній бар */
+.app-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #2a2a38;
-  background: #15151c;
+  margin-bottom: 16px;
 }
 
-.header h2 {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 700;
+.group-info h1 {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: #fff;
+  margin-bottom: 4px;
 }
 
 .badge {
-  font-size: 11px;
-  background: var(--accent);
+  background: var(--primary);
   color: #fff;
-  padding: 2px 8px;
-  border-radius: 12px;
-  margin-top: 4px;
-  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
 }
 
-.subgroup-tag {
+.subgroup-badge {
   font-size: 13px;
-  color: var(--text-muted);
+  font-weight: 600;
+  color: #a29bfe;
+  background: rgba(108, 92, 231, 0.15);
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  padding: 6px 12px;
+  border-radius: 10px;
   cursor: pointer;
 }
 
-/* Контент */
-.content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  -webkit-overflow-scrolling: touch;
-}
-
+/* Вкладки */
 .tab-pane {
   display: none;
+  width: 100%;
 }
 
 .tab-pane.active {
   display: block;
 }
 
-.section-title {
-  font-size: 17px;
-  font-weight: 700;
-  margin: 16px 0 12px 0;
-}
-
-.text-muted {
-  color: var(--text-muted);
-}
-
-.loading {
-  color: var(--text-muted);
-  font-style: italic;
-  font-size: 14px;
-}
-
-/* Картки */
+/* Картки та форми */
 .card {
   background: var(--card-bg);
-  border-radius: 12px;
-  padding: 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: 14px 16px;
   margin-bottom: 12px;
-  border: 1px solid #272736;
-}
-
-.lesson-card.replacement {
-  border-left: 4px solid var(--danger);
-}
-
-.replacement-badge {
-  color: var(--danger);
-  font-size: 12px;
-  font-weight: bold;
-  margin-bottom: 6px;
-}
-
-/* Секції розкладу */
-.day-section {
-  margin-bottom: 22px;
-}
-
-.day-header {
-  font-size: 15px;
-  font-weight: 600;
-  color: #a29bfe;
-  margin: 14px 0 8px 2px;
-  border-bottom: 1px dashed #2a2a38;
-  padding-bottom: 4px;
-}
-
-/* Форми */
-.form-input {
-  width: 100%;
-  padding: 10px;
-  margin-bottom: 10px;
-  background: #121217;
-  border: 1px solid #2a2a38;
-  color: #fff;
-  border-radius: 8px;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-/* Кнопки */
-.btn-primary {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  padding: 9px 15px;
-  border-radius: 8px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.btn-secondary {
-  background: #2a2a38;
-  color: #fff;
-  border: none;
-  padding: 9px 14px;
-  border-radius: 8px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.btn-primary:active, .btn-secondary:active {
-  opacity: 0.8;
-}
-
-.btn-journal {
-  background: #27ae60;
-  color: #fff;
-  border: none;
-  font-size: 11px;
-  padding: 5px 9px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.btn-download {
-  background: #27ae60;
-  color: #fff;
-  border: none;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.btn-download:active {
-  opacity: 0.8;
-}
-
-.btn-sync {
-  background: #232332;
-  color: #a29bfe;
-  border: 1px solid #3b3b52;
-  font-size: 11px;
-  padding: 5px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  transition: all 0.2s;
-}
-
-.btn-sync:active {
-  transform: scale(0.95);
-  background: #2f2f44;
-}
-
-/* Перемикач підгруп старости */
-.subgroup-switcher {
-  display: flex;
-  gap: 6px;
-  background: #181822;
-  padding: 4px;
-  border-radius: 10px;
-  border: 1px solid #2a2a38;
-  margin-bottom: 12px;
-}
-
-.sg-btn {
-  flex: 1;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 8px 4px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.sg-btn.active {
-  background: var(--accent);
-  color: #fff;
-}
-
-/* Блок фільтра дат */
-.filter-card {
-  width: 100%;
 }
 
 .filter-card h4 {
-  margin: 0 0 10px 0;
+  margin-bottom: 10px;
   font-size: 14px;
+  color: #fff;
 }
 
-.filter-card .date-inputs {
+.date-inputs {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  width: 100%;
 }
 
-.filter-card input {
-  flex: 1 1 100px;
-  min-width: 0;
-  padding: 8px 10px;
-  background: #121217;
-  border: 1px solid #2a2a38;
-  color: #fff;
+.date-inputs input {
+  flex: 1;
+  min-width: 90px;
+  background: #202130;
+  border: 1px solid #2f3045;
   border-radius: 8px;
-  text-align: center;
+  padding: 10px;
+  color: #fff;
   font-size: 13px;
+  text-align: center;
 }
 
-.filter-card span {
-  color: var(--text-muted);
-  font-weight: bold;
-}
-
-.filter-card .btn-primary {
-  flex: 2 1 110px;
-}
-
-.filter-card .btn-secondary {
-  flex: 1 1 100px;
-}
-
-/* Модальні вікна */
-.modal {
-  display: none;
-  position: fixed;
-  z-index: 1000;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(2px);
-  pointer-events: auto;
-}
-
-.modal-content {
-  background: var(--card-bg);
-  margin: 20% auto;
-  padding: 20px;
-  border-radius: 14px;
-  width: 90%;
-  max-width: 420px;
-  border: 1px solid #323248;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.modal-header h3 {
-  margin: 0;
-  font-size: 17px;
-}
-
-.close-btn {
-  font-size: 26px;
-  line-height: 20px;
-  color: var(--text-muted);
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-weight: 700;
   cursor: pointer;
 }
 
-/* Списки студентів */
-.students-list {
-  max-height: 50vh;
-  overflow-y: auto;
+.btn-secondary {
+  width: 100%;
+  background: #202130;
+  border: 1px solid #2f3045;
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 4px;
 }
 
-.student-row {
+.schedule-header-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 9px 0;
-  border-bottom: 1px solid #2a2a38;
-}
-
-.status-select {
-  background: #121217;
-  color: #fff;
-  border: 1px solid #2a2a38;
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 13px;
-}
-
-/* Прогрес-бари дисциплін */
-.progress-bar {
-  background: #2a2a38;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-  margin-top: 8px;
-}
-
-.progress-bar .fill {
-  background: #2ecc71;
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.3s ease;
-}
-
-/* Персональна статистика з кільцевою діаграмою */
-.stat-hero-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  padding: 18px 12px;
-  background: linear-gradient(135deg, #1e1e2d 0%, #171722 100%);
-  border: 1px solid #323248;
-}
-
-.stat-ring-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.stat-multicolor-ring {
-  width: 104px;
-  height: 104px;
-  border-radius: 50%;
-  background: conic-gradient(#2ecc71 0deg 360deg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  transition: background 0.4s ease;
-}
-
-.stat-inner-circle {
-  width: 82px;
-  height: 82px;
-  border-radius: 50%;
-  background: #181822;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.stat-big-num {
-  font-size: 22px;
-  font-weight: 800;
-  color: #a29bfe;
-}
-
-.stat-circle-label {
-  font-size: 9px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  margin-top: 2px;
-}
-
-.stat-breakdown {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: 13px;
-}
-
-.stat-item {
-  display: flex;
-  align-items: center;
+  margin: 16px 0 10px 0;
   gap: 8px;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-.dot.present { background: #2ecc71; }
-.dot.absent { background: #ff4757; }
-.dot.late { background: #ffa502; }
-.dot.excused { background: #1e90ff; }
-
-/* Картка рейтингу у звіті старости */
-.group-student-stat-card {
-  margin-bottom: 8px;
-  border-left: 3px solid var(--accent);
+.schedule-header-row h2 {
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
 }
 
-/* Збільшене та комфортне нижнє меню */
-.bottom-nav {
+.btn-sync {
+  background: rgba(30, 144, 255, 0.15);
+  border: 1px solid rgba(30, 144, 255, 0.4);
+  color: #4bcffa;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Перемикач підгруп */
+.subgroup-switcher {
   display: flex;
-  background: #161620;
-  border-top: 1px solid #2a2a38;
-  padding: 8px 6px calc(8px + env(safe-area-inset-bottom));
-  min-height: 64px;
-  align-items: center;
+  background: #171822;
+  border: 1px solid #232435;
+  border-radius: 10px;
+  padding: 3px;
+  margin-bottom: 14px;
+  gap: 4px;
+}
+
+.sg-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sg-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* Розклад */
+.day-header {
+  font-size: 16px;
+  font-weight: 800;
+  color: #a29bfe;
+  margin: 16px 0 8px 0;
+}
+
+.lesson-card {
+  margin-bottom: 10px;
+  border-left: 3px solid var(--primary);
+}
+
+.btn-journal {
+  background: rgba(46, 204, 113, 0.15);
+  border: 1px solid rgba(46, 204, 113, 0.4);
+  color: #2ecc71;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* НИЖНЯ НАВІГАЦІЯ: НАДІЙНО ЗАКРІПЛЕНА ВНИЗУ */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 500px;
+  background: rgba(18, 19, 28, 0.95);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid #232435;
+  display: flex;
+  justify-content: space-around;
+  padding: 8px 4px 12px 4px;
+  z-index: 100;
 }
 
 .nav-item {
-  flex: 1;
   background: none;
   border: none;
   color: var(--text-muted);
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: 4px;
-  padding: 6px 2px;
   cursor: pointer;
-  border-radius: 8px;
-  transition: all 0.15s ease-in-out;
+  flex: 1;
 }
 
-.nav-icon {
-  font-size: 19px;
-  line-height: 1;
+.nav-item .icon {
+  font-size: 18px;
 }
 
-.nav-label {
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
+.nav-item .label {
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .nav-item.active {
-  color: #a29bfe;
+  color: var(--primary);
 }
 
-.nav-item.active .nav-label {
-  font-weight: 700;
-  color: #ffffff;
-}
-
-.nav-item:active {
-  background: rgba(255, 255, 255, 0.05);
-  transform: scale(0.96);
-}
-
-/* Екран аналітики пропусків (стиль скріншота) */
-.stats-screen-title {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 800;
-  color: #ffffff;
-  letter-spacing: -0.5px;
-}
-
-.stats-screen-subtitle {
-  margin: 4px 0 16px 0;
-  font-size: 13px;
+/* Загальні елементи */
+.loading {
+  text-align: center;
   color: var(--text-muted);
-}
-
-/* 3 метричні картки зверху */
-.metrics-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 20px;
-}
-
-.metric-card {
-  background: #171821;
-  border: 1px solid #232433;
-  border-radius: 12px;
-  padding: 14px 10px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-}
-
-.metric-card.risk-card {
-  border-color: rgba(255, 71, 87, 0.35);
-  background: rgba(255, 71, 87, 0.05);
-}
-
-.metric-card .metric-val {
-  font-size: 24px;
-  font-weight: 800;
-  color: #ffffff;
-  line-height: 1.1;
-}
-
-.metric-card.risk-card .metric-val {
-  color: #ff6b81;
-}
-
-.metric-card .metric-lbl {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 6px;
-}
-
-/* Картки студентів */
-.risk-students-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.student-stat-card-modern {
-  background: #181924;
-  border: 1px solid #252637;
-  border-radius: 12px;
-  padding: 12px 14px;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Червона вертикальна лінія зліва для студентів у групі ризику */
-.student-stat-card-modern.is-risk {
-  border-left: 3px solid #ff4757;
-}
-
-.student-stat-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.student-stat-name {
-  font-size: 15px;
-  font-weight: 700;
-  color: #ffffff;
-}
-
-.student-badges-group {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-/* Бейджі статусу */
-.badge-risk {
-  background: rgba(255, 71, 87, 0.18);
-  color: #ff6b81;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 8px;
-  white-space: nowrap;
-}
-
-.badge-neutral {
-  color: #8b8b9e;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 4px;
-}
-
-.badge-excused {
-  background: rgba(30, 144, 255, 0.18);
-  color: #4bcffa;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 8px;
-  white-space: nowrap;
-}
-
-/* Багатоколірний прогрес-бар (зелений, червоний, синій) */
-.student-stat-multibar {
-  width: 100%;
-  height: 6px;
-  background: #252637;
-  border-radius: 3px;
-  display: flex;
-  overflow: hidden;
-  margin-bottom: 6px;
-}
-
-.multibar-fill {
-  height: 100%;
-  transition: width 0.3s ease;
-}
-
-.multibar-fill.fill-pres {
-  background: #2ecc71;
-}
-
-.multibar-fill.fill-abs {
-  background: #ff4757;
-}
-
-.multibar-fill.fill-exc {
-  background: #3498db;
-}
-
-.student-stat-footer {
-  display: flex;
-  justify-content: flex-end;
-  font-size: 12px;
-  color: var(--text-muted);
+  padding: 30px 0;
 }

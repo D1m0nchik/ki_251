@@ -1,52 +1,63 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>КІ-25-1 Hub</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>КІ-25-1 | Розклад та Журнал</title>
+  <link rel="stylesheet" href="style.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="app-container">
-    <header class="header">
-      <div>
-        <h2 id="group-title">КІ-25-1</h2>
-        <span id="user-role-badge" class="badge">Завантаження...</span>
+    <!-- Верхній бар -->
+    <header class="app-header">
+      <div class="group-info">
+        <h1>KI-25-1</h1>
+        <span id="user-role-badge" class="badge">Студент</span>
       </div>
-      <div id="subgroup-indicator" class="subgroup-tag" onclick="openProfileModal()">
-        ...
+      <div id="subgroup-indicator" class="subgroup-badge" onclick="openProfileModal()">
+        1 підгрупа ⚙️
       </div>
     </header>
 
-    <main class="content">
+    <!-- Основний контент -->
+    <main class="app-content">
       <!-- 1. Вкладка Розклад -->
       <section id="tab-schedule" class="tab-pane active">
-        <!-- Блок введення діапазону з авторозстановкою крапок -->
+        <!-- Закріплений блок активних дедлайнів/нагадувань зверху -->
+        <div id="active-deadline-banner" style="display: none; margin-bottom: 16px;"></div>
+
+        <!-- Кнопка створення дедлайну для старости -->
+        <button id="starosta-create-deadline-btn" onclick="openReminderModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #ff4757, #ff6b81); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 700; margin-bottom: 14px; cursor: pointer;">
+          ⏰ Додати дедлайн / завдання
+        </button>
+
+        <!-- Блок вибору періоду -->
         <div class="card filter-card">
           <h4>Отримати розклад за період:</h4>
           <div class="date-inputs">
-  <input type="text" id="filter-sdate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
-  <span>—</span>
-  <input type="text" id="filter-edate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
-  <button class="btn-primary" onclick="applyLocalDateFilter()">Показати</button>
-  <button class="btn-secondary" onclick="showDefaultScheduleFromToday()">Сьогодні / Цей тиждень</button>
-</div>
+            <input type="text" id="filter-sdate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
+            <span>—</span>
+            <input type="text" id="filter-edate" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)">
+            <button class="btn-primary" onclick="applyLocalDateFilter()">Показати</button>
+            <button class="btn-secondary" onclick="showDefaultScheduleFromToday()">Сьогодні / Цей тиждень</button>
+          </div>
         </div>
 
-        <div style="display:flex; justify-content:space-between; align-items:center; margin: 14px 0 8px 0;">
-          <h3 class="section-title" id="schedule-view-title" style="margin:0;">Розклад на тиждень</h3>
-          <button class="btn-sync" onclick="syncFullMonth()" title="Оновити кеш на місяць">🔄 Завантажити на місяць</button>
+        <div class="schedule-header-row">
+          <h2 id="schedule-view-title">Розклад: на сьогодні та найближчі дні</h2>
+          <button class="btn-sync" onclick="syncFullMonth()">🔄 Завантажити на місяць</button>
         </div>
 
-        <!-- Перемикач підгруп (тільки для старости) -->
+        <!-- Перемикач підгруп для старости -->
         <div id="starosta-subgroup-switcher" class="subgroup-switcher" style="display: none;">
           <button class="sg-btn active" onclick="switchStarostaViewSubgroup(0, this)">Всі пари</button>
           <button class="sg-btn" onclick="switchStarostaViewSubgroup(1, this)">1 підгрупа</button>
           <button class="sg-btn" onclick="switchStarostaViewSubgroup(2, this)">2 підгрупа</button>
         </div>
 
-        <div id="schedule-list" class="schedule-container">
+        <!-- Список занять -->
+        <div id="schedule-list">
           <p class="loading">Завантаження розкладу...</p>
         </div>
       </section>
@@ -68,128 +79,145 @@
         </div>
         <p style="margin: 0 0 16px 0; font-size: 13px; color: #8e8ea0;">Поріг 3 пропуски з дисципліни</p>
 
-        <!-- 3 акуратні картки метрик зверху -->
+        <!-- 3 акуратні окремі картки зверху -->
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px;">
-          <!-- Картка 1: В групі ризику -->
           <div style="background: rgba(255, 71, 87, 0.08); border: 1px solid rgba(255, 71, 87, 0.25); border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
             <span id="metric-risk-count" style="font-size: 26px; font-weight: 800; color: #ff6b81; line-height: 1;">0</span>
             <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">в групі ризику</span>
           </div>
 
-          <!-- Картка 2: Студентів -->
           <div style="background: #171822; border: 1px solid #262738; border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
             <span id="metric-students-count" style="font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
             <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">студентів</span>
           </div>
 
-          <!-- Картка 3: Пар всього -->
           <div style="background: #171822; border: 1px solid #262738; border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
             <span id="metric-lessons-total" style="font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
             <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">пар всього</span>
           </div>
         </div>
 
-        <!-- Контейнер карток студентів з барами -->
         <div id="group-stats-table-container" style="display: flex; flex-direction: column; gap: 10px;">
           <p class="loading">Завантаження аналітики...</p>
         </div>
       </section>
 
-      <!-- 4. Вкладка Оголошення -->
-      <section id="tab-announcements" class="tab-pane">
-        <div id="starosta-broadcast-panel" class="card" style="display: none;">
-          <h4>Надіслати оголошення групі</h4>
-          <input type="text" id="broadcast-title" placeholder="Тема (наприклад: Перенос пари)" class="form-input">
-          <textarea id="broadcast-body" placeholder="Текст повідомлення..." rows="3" class="form-input"></textarea>
-          <button class="btn-primary" onclick="sendBroadcastMessage()">Розіслати в Telegram 📢</button>
+      <!-- 4. Вкладка Новини / Оголошення -->
+      <section id="tab-news" class="tab-pane">
+        <h2>Оголошення групи</h2>
+        <div id="starosta-broadcast-panel" class="card" style="display: none; margin-bottom: 16px;">
+          <h4>Створити розсилку для групи</h4>
+          <input type="text" id="broadcast-title" placeholder="Тема оголошення..." style="width: 100%; margin-bottom: 8px;">
+          <textarea id="broadcast-body" placeholder="Текст оголошення..." style="width: 100%; height: 80px; margin-bottom: 8px;"></textarea>
+          <button class="btn-primary" onclick="sendBroadcastMessage()">📢 Опублікувати та надіслати ботом</button>
         </div>
-
-        <h3 class="section-title">Останні новини</h3>
         <div id="announcements-list">
-          <p class="loading">Завантаження оголошень...</p>
+          <p class="loading">Завантаження новин...</p>
         </div>
       </section>
 
-      <!-- 5. Персональна статистика студента з багатоколірною діаграмою -->
+      <!-- 5. Вкладка Успішність (Особиста статистика студента) -->
       <section id="tab-stats" class="tab-pane">
-        <h3 class="section-title">Моя успішність і відвідування</h3>
-        
-        <div class="card stat-hero-card">
+        <h2>Моя відвідуваність</h2>
+        <div class="card stats-summary-card">
           <div class="stat-ring-container">
-            <div id="stat-multicolor-ring" class="stat-multicolor-ring">
-              <div class="stat-inner-circle">
-                <span id="stat-percent" class="stat-big-num">0%</span>
-                <span class="stat-circle-label">присутність</span>
+            <div id="stat-multicolor-ring" class="circular-chart">
+              <div class="inner-circle">
+                <span id="stat-percent">0%</span>
               </div>
             </div>
           </div>
-
           <div class="stat-breakdown">
-            <div class="stat-item"><span class="dot present"></span> Був: <strong id="stat-pres">0</strong></div>
-            <div class="stat-item"><span class="dot absent"></span> Пропуски: <strong id="stat-abs">0</strong></div>
+            <div class="stat-item"><span class="dot pres"></span> Був: <strong id="stat-pres">0</strong></div>
+            <div class="stat-item"><span class="dot abs"></span> Пропуски (Н): <strong id="stat-abs">0</strong></div>
             <div class="stat-item"><span class="dot late"></span> Запізнення: <strong id="stat-late">0</strong></div>
-            <div class="stat-item"><span class="dot excused"></span> Поважні: <strong id="stat-exc">0</strong></div>
+            <div class="stat-item"><span class="dot exc"></span> Поважна: <strong id="stat-exc">0</strong></div>
           </div>
         </div>
-
-        <h4 style="margin: 20px 0 10px 0;">Відвідуваність по дисциплінах</h4>
+        <h3>По дисциплінах</h3>
         <div id="subject-stats-list"></div>
       </section>
     </main>
 
-    <!-- Модальні вікна -->
-    <div id="profile-modal" class="modal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h3>Налаштування профілю</h3>
-          <span class="close-btn" onclick="closeProfileModal()">&times;</span>
-        </div>
-        <p class="text-muted" style="font-size:13px;">Вкажіть справжнє ПІБ для журналу старости</p>
-        <input type="text" id="profile-fullname" placeholder="Шевченко Тарас" class="form-input">
-        <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:6px;">Підгрупа:</label>
-        <select id="profile-subgroup" class="form-input">
-          <option value="1">1 підгрупа</option>
-          <option value="2">2 підгрупа</option>
-        </select>
-        <button class="btn-primary" style="width: 100%; margin-top: 10px;" onclick="saveProfile()">Зберегти</button>
-      </div>
-    </div>
-
-    <div id="attendance-modal" class="modal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h3 id="modal-lesson-title">Відмітка на парі</h3>
-          <span class="close-btn" onclick="closeAttendanceModal()">&times;</span>
-        </div>
-        <div id="modal-students-list" class="students-list"></div>
-        <button class="btn-primary" style="width: 100%; margin-top: 15px;" onclick="saveAttendance()">Зберегти журнал</button>
-      </div>
-    </div>
-
-    <!-- Нижня навігація -->
+    <!-- Нижня навігаційна панель -->
     <nav class="bottom-nav">
       <button class="nav-item active" onclick="switchTab('tab-schedule', this)">
-        <span class="nav-icon">📅</span>
-        <span class="nav-label">Розклад</span>
+        <span class="icon">📅</span>
+        <span class="label">Розклад</span>
       </button>
       <button id="nav-group-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group', this)">
-        <span class="nav-icon">👥</span>
-        <span class="nav-label">Група</span>
+        <span class="icon">👥</span>
+        <span class="label">Група</span>
       </button>
       <button id="nav-group-stats-btn" class="nav-item" style="display: none;" onclick="switchTab('tab-group-stats', this)">
-        <span class="nav-icon">📊</span>
-        <span class="nav-label">Журнал</span>
+        <span class="icon">📊</span>
+        <span class="label">Журнал</span>
       </button>
-      <button class="nav-item" onclick="switchTab('tab-announcements', this)">
-        <span class="nav-icon">📢</span>
-        <span class="nav-label">Новини</span>
+      <button class="nav-item" onclick="switchTab('tab-news', this)">
+        <span class="icon">📢</span>
+        <span class="label">Новини</span>
       </button>
       <button class="nav-item" onclick="switchTab('tab-stats', this)">
-        <span class="nav-icon">📈</span>
-        <span class="nav-label">Успішність</span>
+        <span class="icon">📈</span>
+        <span class="label">Успішність</span>
       </button>
     </nav>
   </div>
+
+  <!-- Модальне вікно профілю -->
+  <div id="profile-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h3>Профіль студента</h3>
+      <label>Ваше Прізвище та Ім'я:</label>
+      <input type="text" id="profile-fullname" placeholder="Іванов Іван">
+      <label>Ваша підгрупа:</label>
+      <select id="profile-subgroup">
+        <option value="1">1 підгрупа</option>
+        <option value="2">2 підгрупа</option>
+      </select>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeProfileModal()">Скасувати</button>
+        <button class="btn-primary" onclick="saveProfile()">Зберегти</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальне вікно створення нагадування -->
+  <div id="reminder-modal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 999; backdrop-filter: blur(4px); padding: 20px; box-sizing: border-box; align-items: center; justify-content: center;">
+    <div style="background: #171822; border: 1px solid #28293d; border-radius: 16px; padding: 20px; width: 100%; max-width: 400px; box-sizing: border-box;">
+      <h3 style="margin: 0 0 14px 0; color: #fff;">⏰ Створити дедлайн / завдання</h3>
+      
+      <label style="font-size: 12px; color: #8e8ea0;">Тема / Назва завдання:</label>
+      <input type="text" id="rem-title" placeholder="Тест-колоквіум з ОВП" style="width: 100%; background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; color: #fff; margin-bottom: 12px; box-sizing: border-box;">
+
+      <label style="font-size: 12px; color: #8e8ea0;">Опис / Інструкції (посилання):</label>
+      <textarea id="rem-desc" placeholder="Пройти в Moodle або надіслати на пошту..." style="width: 100%; background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; color: #fff; margin-bottom: 12px; box-sizing: border-box; height: 60px;"></textarea>
+
+      <label style="font-size: 12px; color: #8e8ea0;">Дата і час початку:</label>
+      <input type="datetime-local" id="rem-start" style="width: 100%; background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; color: #fff; margin-bottom: 12px; box-sizing: border-box;">
+
+      <label style="font-size: 12px; color: #8e8ea0;">Дедлайн (до коли виконати):</label>
+      <input type="datetime-local" id="rem-deadline" style="width: 100%; background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; color: #fff; margin-bottom: 16px; box-sizing: border-box;">
+
+      <div style="display: flex; gap: 10px;">
+        <button onclick="closeReminderModal()" style="flex: 1; background: #262738; color: #fff; border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer;">Скасувати</button>
+        <button onclick="saveReminder()" style="flex: 1; background: #ff4757; color: #fff; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer;">Створити</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальне вікно журналу відвідуваності на пару -->
+  <div id="attendance-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h3 id="modal-lesson-title">Журнал пари</h3>
+      <div id="modal-students-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeAttendanceModal()">Скасувати</button>
+        <button class="btn-primary" onclick="saveAttendance()">Зберегти журнал</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

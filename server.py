@@ -494,7 +494,7 @@ async def get_students_for_lesson(schedule_id: int, x_telegram_init_data: str = 
         target_sg = lesson["target_subgroup"]
 
         query = """
-            SELECT u.telegram_id, u.full_name, u.subgroup, COALESCE(a.status, 'present') as status
+            SELECT u.telegram_id, u.full_name, u.subgroup, COALESCE(a.status, 'absent') as status
             FROM users u
             LEFT JOIN attendance a ON a.telegram_id = u.telegram_id AND a.schedule_id = $1
             WHERE ($2 = 0 OR u.subgroup = $3)

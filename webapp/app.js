@@ -667,7 +667,7 @@ async function openAttendanceModal(scheduleId, subjectName) {
   const modal = document.getElementById("attendance-modal");
   if (modal) {
     modal.style.display = "flex";
-    document.body.style.overflow = "hidden"; // Блокуємо скрол фонової сторінки
+    document.body.style.overflow = "hidden";
   }
 
   try {
@@ -675,17 +675,18 @@ async function openAttendanceModal(scheduleId, subjectName) {
     if (list) list.innerHTML = "";
 
     students.forEach(s => {
-      // Якщо пару ще не зберігали, статус автоматично absent (Пропуск)
       const currentStatus = s.status || "absent";
       attendanceState[s.telegram_id] = currentStatus;
 
       const row = document.createElement("div");
       row.className = "student-row";
-      row.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #232435;";
+      row.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #232435; gap: 10px;";
       
       row.innerHTML = `
-        <span style="font-size: 14px; font-weight: 600; color: #fff;">${s.full_name} (${s.subgroup} підгр.)</span>
-        <select onchange="updateAttendanceStatus(${s.telegram_id}, this.value)" style="background: #202130; border: 1px solid #2f3045; color: #fff; padding: 6px 10px; border-radius: 8px; font-size: 13px; outline: none;">
+        <span style="font-size: 14px; font-weight: 600; color: #fff; flex: 1; word-break: break-word; line-height: 1.3;">
+          ${s.full_name} <span style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">(${s.subgroup} підгр.)</span>
+        </span>
+        <select onchange="updateAttendanceStatus(${s.telegram_id}, this.value)" style="width: 130px; min-width: 130px; max-width: 130px; flex-shrink: 0; background: #202130; border: 1px solid #2f3045; color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; text-align: left;">
           <option value="absent" ${currentStatus === 'absent' ? 'selected' : ''}>❌ Пропуск</option>
           <option value="present" ${currentStatus === 'present' ? 'selected' : ''}>✅ Був</option>
           <option value="late" ${currentStatus === 'late' ? 'selected' : ''}>⏳ Запізнився</option>

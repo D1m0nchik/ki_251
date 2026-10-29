@@ -269,10 +269,12 @@ textarea {
   padding: 20px;
   width: 100%;
   max-width: 400px;
+  max-height: 85vh;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .modal-content h3 {
@@ -280,6 +282,7 @@ textarea {
   font-weight: 800;
   color: #ffffff;
   margin-bottom: 4px;
+  flex-shrink: 0;
 }
 
 .modal-content label {
@@ -297,12 +300,36 @@ textarea {
 .modal-actions {
   display: flex;
   gap: 10px;
-  margin-top: 10px;
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .modal-actions button {
   flex: 1;
   padding: 10px;
+}
+
+/* Окремий скрол для списку студентів у журналі */
+#modal-students-list {
+  max-height: 55vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 6px;
+  margin-bottom: 8px;
+}
+
+#modal-students-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+#modal-students-list::-webkit-scrollbar-track {
+  background: #171822;
+}
+
+#modal-students-list::-webkit-scrollbar-thumb {
+  background: #2f3045;
+  border-radius: 4px;
 }
 
 /* Нижнє меню */

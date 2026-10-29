@@ -655,32 +655,41 @@ async function loadMyStats() {
   }
 }
 
+// Журнал відвідуваності на пару з дефолтним "Пропуск" та блокуванням скролу фону
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
   const title = document.getElementById("modal-lesson-title");
   if (title) title.innerText = `Журнал: ${subjectName}`;
   const list = document.getElementById("modal-students-list");
-  if (list) list.innerHTML = "<p>Завантаження студентів...</p>";
+  if (list) list.innerHTML = "<p class='loading'>Завантаження студентів...</p>";
   
   const modal = document.getElementById("attendance-modal");
-  if (modal) modal.style.display = "flex";
+  if (modal) {
+    modal.style.display = "flex";
+    document.body.style.overflow = "hidden"; // Блокуємо скрол фонової сторінки
+  }
 
   try {
     const students = await apiRequest(`/api/attendance/students?schedule_id=${scheduleId}`);
     if (list) list.innerHTML = "";
 
     students.forEach(s => {
-      attendanceState[s.telegram_id] = s.status || "present";
+      // Якщо пару ще не зберігали, статус автоматично absent (Пропуск)
+      const currentStatus = s.status || "absent";
+      attendanceState[s.telegram_id] = currentStatus;
+
       const row = document.createElement("div");
       row.className = "student-row";
+      row.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #232435;";
+      
       row.innerHTML = `
-        <span>${s.full_name} (${s.subgroup} підгр.)</span>
-        <select onchange="updateAttendanceStatus(${s.telegram_id}, this.value)" class="status-select">
-          <option value="present" ${s.status === 'present' ? 'selected' : ''}>✅ Був</option>
-          <option value="absent" ${s.status === 'absent' ? 'selected' : ''}>❌ Пропуск</option>
-          <option value="late" ${s.status === 'late' ? 'selected' : ''}>⏳ Запізнився</option>
-          <option value="excused" ${s.status === 'excused' ? 'selected' : ''}>📋 Поважна</option>
+        <span style="font-size: 14px; font-weight: 600; color: #fff;">${s.full_name} (${s.subgroup} підгр.)</span>
+        <select onchange="updateAttendanceStatus(${s.telegram_id}, this.value)" style="background: #202130; border: 1px solid #2f3045; color: #fff; padding: 6px 10px; border-radius: 8px; font-size: 13px; outline: none;">
+          <option value="absent" ${currentStatus === 'absent' ? 'selected' : ''}>❌ Пропуск</option>
+          <option value="present" ${currentStatus === 'present' ? 'selected' : ''}>✅ Був</option>
+          <option value="late" ${currentStatus === 'late' ? 'selected' : ''}>⏳ Запізнився</option>
+          <option value="excused" ${currentStatus === 'excused' ? 'selected' : ''}>📋 Поважна</option>
         </select>
       `;
       list.appendChild(row);
@@ -712,7 +721,10 @@ async function saveAttendance() {
 
 function closeAttendanceModal() {
   const modal = document.getElementById("attendance-modal");
-  if (modal) modal.style.display = "none";
+  if (modal) {
+    modal.style.display = "none";
+    document.body.style.overflow = "";
+  }
 }
 
 async function downloadAttendanceReport() {

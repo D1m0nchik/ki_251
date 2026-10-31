@@ -10,14 +10,13 @@ let currentUser = null;
 let currentActiveLessonId = null;
 let attendanceState = {};
 let allScheduleData = [];
-let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
+let selectedSubgroupFilter = 0;
 
 let activeSearchRange = null;
 let showOriginalSchedule = false;
 
-// Стан інтерактивного календаря
 let calCurrentYear = 2026;
-let calCurrentMonth = 10; // 1-12
+let calCurrentMonth = 10;
 let calMarkedDays = [];
 let activeMatrixDateStr = null;
 
@@ -98,9 +97,9 @@ async function init() {
       calCurrentYear = now.getFullYear();
       calCurrentMonth = now.getMonth() + 1;
 
-      loadGroupManagement().catch(e => console.error("loadGroupManagement error:", e));
-      loadGroupStats().catch(e => console.error("loadGroupStats error:", e));
-      loadCalendarMonth(calCurrentYear, calCurrentMonth).catch(e => console.error("loadCalendarMonth error:", e));
+      loadGroupManagement().catch(e => console.error(e));
+      loadGroupStats().catch(e => console.error(e));
+      loadCalendarMonth(calCurrentYear, calCurrentMonth).catch(e => console.error(e));
     }
 
     if (!currentUser.full_name || currentUser.full_name.split(" ").length < 2) {
@@ -346,10 +345,7 @@ function renderSchedule(lessonsList) {
   }
 }
 
-// =========================================================
-// ЛОГІКА КАЛЕНДАРНОГО ЖУРНАЛУ ТА ШАХМАТКИ
-// =========================================================
-
+// Календар та Шахматка
 function switchJournalSubTab(subTab) {
   const calView = document.getElementById("journal-view-calendar");
   const statsView = document.getElementById("journal-view-stats");
@@ -587,8 +583,6 @@ async function downloadMatrixReport() {
     alert("Помилка формування відомості: " + err.message);
   }
 }
-
-// =========================================================
 
 async function openOverrideModal() {
   const modal = document.getElementById("override-modal");

@@ -219,14 +219,90 @@ textarea {
   margin: 16px 0 8px 0;
 }
 
+/* КАРТКИ ЗАНЯТЬ */
 .card.lesson-card {
   margin-bottom: 10px;
   border-left: 4px solid var(--primary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .card.lesson-card.custom-override {
   border-left: 4px solid #f1c40f !important;
   background: linear-gradient(135deg, rgba(241, 196, 15, 0.09), rgba(243, 156, 18, 0.02));
+}
+
+.lesson-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.lesson-time-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.lesson-badges-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+/* Бейджі підгрупи */
+.tag-sg-both {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+  border: 1px solid rgba(46, 204, 113, 0.35);
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.tag-sg-1 {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(108, 92, 231, 0.2);
+  color: #a29bfe;
+  border: 1px solid rgba(108, 92, 231, 0.4);
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.tag-sg-2 {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(243, 156, 18, 0.2);
+  color: #f39c12;
+  border: 1px solid rgba(243, 156, 18, 0.4);
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* Бейдж вибіркової дисципліни */
+.tag-elective {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(253, 121, 168, 0.18);
+  color: #fd79a8;
+  border: 1px solid rgba(253, 121, 168, 0.4);
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .override-badge {
@@ -238,7 +314,8 @@ textarea {
   font-size: 11px;
   font-weight: 700;
   display: inline-block;
-  margin-bottom: 6px;
+  align-self: flex-start;
+  margin-bottom: 2px;
 }
 
 .btn-journal {
@@ -250,9 +327,9 @@ textarea {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-/* Дистанційне посилання та бейдж */
 .online-badge {
   background: rgba(75, 207, 250, 0.15);
   border: 1px solid rgba(75, 207, 250, 0.35);
@@ -264,7 +341,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-bottom: 6px;
+  align-self: flex-start;
 }
 
 .btn-meet-join {
@@ -273,7 +350,7 @@ textarea {
   justify-content: center;
   gap: 6px;
   width: 100%;
-  margin-top: 10px;
+  margin-top: 6px;
   padding: 9px 12px;
   background: linear-gradient(135deg, #1a73e8, #1557b0);
   color: #ffffff;
@@ -461,10 +538,7 @@ textarea {
   font-weight: 700;
 }
 
-/* =========================================================
-   ВИПРАВЛЕННЯ МОДАЛЬНИХ ВІКОН ТА СПИСКУ ПАР
-   ========================================================= */
-
+/* Модальні вікна */
 .modal {
   position: fixed;
   inset: 0;
@@ -491,7 +565,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow-y: auto; /* Дозволяє плавно скролити модалку на невеликих екранах */
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
@@ -530,12 +604,11 @@ textarea {
   padding: 10px;
 }
 
-/* Блок списку пар для заміни: фіксована висота + flex-shrink: 0 */
 #override-source-lessons-list {
   min-height: 120px;
   height: 135px;
   max-height: 140px;
-  flex-shrink: 0 !important; /* ЗАХИСТ: flexbox більше не стискає блок */
+  flex-shrink: 0 !important;
   overflow-y: auto;
   overflow-x: hidden;
   background: #202130;

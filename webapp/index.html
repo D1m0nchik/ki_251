@@ -4,8 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>КІ-25-1 | Розклад та Журнал</title>
-  <!-- ?v=3 для скидання кешу вбудованого браузера Telegram -->
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -27,17 +26,14 @@
       <section id="tab-schedule" class="tab-pane active">
         <div id="active-deadline-banner" style="display: none; margin-bottom: 16px;"></div>
 
-        <!-- Кнопка створення дедлайну -->
         <button id="starosta-create-deadline-btn" onclick="openReminderModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #ff4757, #ff6b81); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 700; margin-bottom: 10px; cursor: pointer;">
           ⏰ Додати дедлайн / завдання
         </button>
 
-        <!-- Кнопка об'єднання / зміни пари -->
         <button id="starosta-override-btn" onclick="openOverrideModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #f39c12, #f1c40f); color: #171822; border: none; padding: 12px; border-radius: 12px; font-weight: 800; margin-bottom: 14px; cursor: pointer;">
           🔄 Об'єднати / замінити пару
         </button>
 
-        <!-- Блок вибору періоду -->
         <div class="card filter-card">
           <h4>Отримати розклад за період:</h4>
           <div class="date-inputs">
@@ -72,10 +68,10 @@
         </div>
       </section>
 
-      <!-- 2. Вкладка Склад групи (для старости) -->
+      <!-- 2. Вкладка Склад групи (для старости: підгрупи + вибіркові) -->
       <section id="tab-group" class="tab-pane">
         <h2 style="font-size: 24px; font-weight: 800; margin: 0 0 6px 0; color: #fff;">Склад групи КІ-25-1</h2>
-        <p style="font-size: 13px; color: #8e8ea0; margin: 0 0 16px 0;">Розподіл по підгрупах</p>
+        <p style="font-size: 13px; color: #8e8ea0; margin: 0 0 16px 0;">Розподіл по підгрупах та вибіркових предметах</p>
         <div id="group-students-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
       </section>
 
@@ -91,7 +87,6 @@
           </button>
         </div>
 
-        <!-- 3.1. Календар та Шахматка -->
         <div id="journal-view-calendar">
           <div id="cal-picker-box" class="card" style="padding: 16px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
@@ -132,7 +127,6 @@
           </div>
         </div>
 
-        <!-- 3.2. Аналітика прогулів -->
         <div id="journal-view-stats" style="display: none;">
           <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px;">
             <div style="background: rgba(255, 71, 87, 0.08); border: 1px solid rgba(255, 71, 87, 0.25); border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
@@ -255,7 +249,6 @@
     </div>
   </div>
 
-  <!-- Модальне вікно об'єднання / перенесення пар -->
   <div id="override-modal" class="modal" style="display: none;">
     <div class="modal-content" style="max-height: 90vh;">
       <h3>🔄 Об'єднання / Перенесення пар</h3>
@@ -288,7 +281,6 @@
         </select>
       </div>
 
-      <!-- Поле для посилання Google Meet -->
       <label>5. Посилання на онлайн-зустріч (Google Meet / Zoom):</label>
       <input type="text" id="ov-meet" placeholder="https://meet.google.com/xyz-abcd-efg">
 
@@ -297,6 +289,13 @@
         <option value="0">👥 Обидві підгрупи (1 та 2 разом)</option>
         <option value="1">1 підгрупа</option>
         <option value="2">2 підгрупа</option>
+      </select>
+
+      <label>7. Вибіркова дисципліна:</label>
+      <select id="ov-elective">
+        <option value="0">Звичайна (для всіх)</option>
+        <option value="1">⭐ Вибіркова №1</option>
+        <option value="2">⭐ Вибіркова №2</option>
       </select>
 
       <div class="modal-actions">
@@ -317,6 +316,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

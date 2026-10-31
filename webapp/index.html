@@ -24,15 +24,16 @@
     <main class="app-content">
       <!-- 1. Вкладка Розклад -->
       <section id="tab-schedule" class="tab-pane active">
-        <!-- Закріплений блок активних дедлайнів/нагадувань зверху -->
         <div id="active-deadline-banner" style="display: none; margin-bottom: 16px;"></div>
 
-        <!-- Кнопка створення дедлайну для старости -->
-        <button id="starosta-create-deadline-btn" onclick="openReminderModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #ff4757, #ff6b81); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 700; margin-bottom: 14px; cursor: pointer;">
+        <button id="starosta-create-deadline-btn" onclick="openReminderModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #ff4757, #ff6b81); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 700; margin-bottom: 10px; cursor: pointer;">
           ⏰ Додати дедлайн / завдання
         </button>
 
-        <!-- Блок вибору періоду -->
+        <button id="starosta-override-btn" onclick="openOverrideModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #f39c12, #f1c40f); color: #171822; border: none; padding: 12px; border-radius: 12px; font-weight: 800; margin-bottom: 14px; cursor: pointer;">
+          🔄 Об'єднати / замінити пару
+        </button>
+
         <div class="card filter-card">
           <h4>Отримати розклад за період:</h4>
           <div class="date-inputs">
@@ -42,6 +43,13 @@
             <button class="btn-primary" onclick="applyLocalDateFilter()">Показати</button>
             <button class="btn-secondary" onclick="showDefaultScheduleFromToday()">Сьогодні / Цей тиждень</button>
           </div>
+
+          <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--card-border);">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted); cursor: pointer;">
+              <input type="checkbox" id="show-original-toggle" onchange="onOriginalToggleChange()" style="width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer;">
+              <span>Оригінальний розклад (ІФНТУНГ)</span>
+            </label>
+          </div>
         </div>
 
         <div class="schedule-header-row">
@@ -49,14 +57,12 @@
           <button class="btn-sync" onclick="syncFullMonth()">🔄 Завантажити на місяць</button>
         </div>
 
-        <!-- Перемикач підгруп для старости -->
         <div id="starosta-subgroup-switcher" class="subgroup-switcher" style="display: none;">
           <button class="sg-btn active" onclick="switchStarostaViewSubgroup(0, this)">Всі пари</button>
           <button class="sg-btn" onclick="switchStarostaViewSubgroup(1, this)">1 підгрупа</button>
           <button class="sg-btn" onclick="switchStarostaViewSubgroup(2, this)">2 підгрупа</button>
         </div>
 
-        <!-- Список занять -->
         <div id="schedule-list">
           <p class="loading">Завантаження розкладу...</p>
         </div>
@@ -69,36 +75,85 @@
         <div id="group-students-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
       </section>
 
-      <!-- 3. Вкладка Статистика пропусків (Журнал для старости) -->
+      <!-- 3. Вкладка Журнал (Календар + Шахматка + Аналітика) -->
       <section id="tab-group-stats" class="tab-pane">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-          <h2 style="font-size: 26px; font-weight: 800; color: #ffffff; margin: 0;">Прогули</h2>
-          <button onclick="downloadAttendanceReport()" style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.4); color: #2ecc71; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-            📥 Excel
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div class="subgroup-switcher" style="margin: 0; flex: 1; max-width: 240px;">
+            <button id="subtab-btn-cal" class="sg-btn active" onclick="switchJournalSubTab('cal')">📅 Календар</button>
+            <button id="subtab-btn-stats" class="sg-btn" onclick="switchJournalSubTab('stats')">📊 Аналітика</button>
+          </div>
+          <button onclick="downloadMatrixReport()" style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.4); color: #2ecc71; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;">
+            📥 Відомість
           </button>
         </div>
-        <p style="margin: 0 0 16px 0; font-size: 13px; color: #8e8ea0;">Поріг 3 пропуски з дисципліни</p>
 
-        <!-- 3 акуратні окремі картки зверху -->
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px;">
-          <div style="background: rgba(255, 71, 87, 0.08); border: 1px solid rgba(255, 71, 87, 0.25); border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
-            <span id="metric-risk-count" style="font-size: 26px; font-weight: 800; color: #ff6b81; line-height: 1;">0</span>
-            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">в групі ризику</span>
+        <!-- 3.1. Підвкладка Календаря та Шахматки (як на фото) -->
+        <div id="journal-view-calendar">
+          <!-- Блок календаря місяця -->
+          <div id="cal-picker-box" class="card" style="padding: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+              <button onclick="changeCalendarMonth(-1)" class="btn-cal-nav">‹</button>
+              <h3 id="cal-month-title" style="margin: 0; font-size: 17px; font-weight: 800; color: #fff;">Жовтень 2026</h3>
+              <button onclick="changeCalendarMonth(1)" class="btn-cal-nav">›</button>
+            </div>
+            
+            <div class="calendar-grid-header">
+              <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Нд</span>
+            </div>
+            <div id="calendar-days-grid" class="calendar-days-grid"></div>
+
+            <p style="font-size: 11px; color: #8e8ea0; margin: 14px 0 0 0; text-align: center;">
+              • Крапкою позначено дні з відмітками пар. Натисніть на день, щоб відкрити або заповнити журнал.
+            </p>
           </div>
 
-          <div style="background: #171822; border: 1px solid #262738; border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
-            <span id="metric-students-count" style="font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
-            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">студентів</span>
-          </div>
+          <!-- Блок шахматки конкретного обраного дня -->
+          <div id="day-matrix-box" class="card" style="display: none; padding: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <div>
+                <button onclick="backToCalendarPicker()" style="background: none; border: none; color: #a29bfe; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0;">‹ До календаря</button>
+                <h3 id="matrix-day-title" style="margin: 4px 0 0 0; font-size: 18px; font-weight: 800; color: #fff;">14 жовтня</h3>
+              </div>
+              <span id="matrix-day-dow" style="font-size: 12px; color: #8e8ea0;">Середа</span>
+            </div>
 
-          <div style="background: #171822; border: 1px solid #262738; border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
-            <span id="metric-lessons-total" style="font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
-            <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">пар всього</span>
+            <!-- Легенда статусу -->
+            <div style="display: flex; gap: 8px; font-size: 11px; margin-bottom: 12px; flex-wrap: wrap;">
+              <span class="legend-badge cell-pres">✓ Був</span>
+              <span class="legend-badge cell-abs">Н Пропуск</span>
+              <span class="legend-badge cell-late">О Запізнення</span>
+              <span class="legend-badge cell-exc">П Поважна</span>
+            </div>
+
+            <!-- Таблиця-шахматка з горизонтальним скролом для колонок пар -->
+            <div id="day-matrix-table-container" class="matrix-table-wrapper">
+              <p class="loading">Завантаження матриці дня...</p>
+            </div>
           </div>
         </div>
 
-        <div id="group-stats-table-container" style="display: flex; flex-direction: column; gap: 10px;">
-          <p class="loading">Завантаження аналітики...</p>
+        <!-- 3.2. Підвкладка аналітики прогулів -->
+        <div id="journal-view-stats" style="display: none;">
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px;">
+            <div style="background: rgba(255, 71, 87, 0.08); border: 1px solid rgba(255, 71, 87, 0.25); border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
+              <span id="metric-risk-count" style="font-size: 26px; font-weight: 800; color: #ff6b81; line-height: 1;">0</span>
+              <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">в групі ризику</span>
+            </div>
+
+            <div style="background: #171822; border: 1px solid #232435; border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
+              <span id="metric-students-count" style="font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
+              <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">студентів</span>
+            </div>
+
+            <div style="background: #171822; border: 1px solid #232435; border-radius: 14px; padding: 14px 12px; display: flex; flex-direction: column; justify-content: space-between; min-height: 78px; box-sizing: border-box;">
+              <span id="metric-lessons-total" style="font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1;">0</span>
+              <span style="font-size: 11px; color: #8e8ea0; margin-top: 6px; line-height: 1.2;">пар всього</span>
+            </div>
+          </div>
+
+          <div id="group-stats-table-container" style="display: flex; flex-direction: column; gap: 10px;">
+            <p class="loading">Завантаження аналітики...</p>
+          </div>
         </div>
       </section>
 
@@ -116,7 +171,7 @@
         </div>
       </section>
 
-      <!-- 5. Вкладка Успішність (Особиста статистика студента) -->
+      <!-- 5. Вкладка Успішність -->
       <section id="tab-stats" class="tab-pane">
         <h2>Моя відвідуваність</h2>
         <div class="card stats-summary-card">
@@ -164,7 +219,7 @@
     </nav>
   </div>
 
-  <!-- Модальне вікно профілю -->
+  <!-- Модальні вікна -->
   <div id="profile-modal" class="modal" style="display: none;">
     <div class="modal-content">
       <h3>Профіль студента</h3>
@@ -182,31 +237,65 @@
     </div>
   </div>
 
-  <!-- Модальне вікно створення нагадування -->
-  <div id="reminder-modal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 999; backdrop-filter: blur(4px); padding: 20px; box-sizing: border-box; align-items: center; justify-content: center;">
-    <div style="background: #171822; border: 1px solid #28293d; border-radius: 16px; padding: 20px; width: 100%; max-width: 400px; box-sizing: border-box;">
-      <h3 style="margin: 0 0 14px 0; color: #fff;">⏰ Створити дедлайн / завдання</h3>
-      
-      <label style="font-size: 12px; color: #8e8ea0;">Тема / Назва завдання:</label>
-      <input type="text" id="rem-title" placeholder="Тест-колоквіум з ОВП" style="width: 100%; background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; color: #fff; margin-bottom: 12px; box-sizing: border-box;">
-
-      <label style="font-size: 12px; color: #8e8ea0;">Опис / Інструкції (посилання):</label>
-      <textarea id="rem-desc" placeholder="Пройти в Moodle або надіслати на пошту..." style="width: 100%; background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; color: #fff; margin-bottom: 12px; box-sizing: border-box; height: 60px;"></textarea>
-
-      <label style="font-size: 12px; color: #8e8ea0;">Дата і час початку:</label>
-      <input type="datetime-local" id="rem-start" style="width: 100%; background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; color: #fff; margin-bottom: 12px; box-sizing: border-box;">
-
-      <label style="font-size: 12px; color: #8e8ea0;">Дедлайн (до коли виконати):</label>
-      <input type="datetime-local" id="rem-deadline" style="width: 100%; background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; color: #fff; margin-bottom: 16px; box-sizing: border-box;">
-
-      <div style="display: flex; gap: 10px;">
-        <button onclick="closeReminderModal()" style="flex: 1; background: #262738; color: #fff; border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer;">Скасувати</button>
-        <button onclick="saveReminder()" style="flex: 1; background: #ff4757; color: #fff; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer;">Створити</button>
+  <div id="reminder-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h3>⏰ Створити дедлайн / завдання</h3>
+      <label>Тема / Назва завдання:</label>
+      <input type="text" id="rem-title" placeholder="Тест-колоквіум з ОВП">
+      <label>Опис / Інструкції (посилання):</label>
+      <textarea id="rem-desc" placeholder="Пройти в Moodle або надіслати на пошту..." style="height: 60px;"></textarea>
+      <label>Дата і час початку:</label>
+      <input type="datetime-local" id="rem-start">
+      <label>Дедлайн (до коли виконати):</label>
+      <input type="datetime-local" id="rem-deadline">
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeReminderModal()">Скасувати</button>
+        <button class="btn-primary" style="background: #ff4757;" onclick="saveReminder()">Створити</button>
       </div>
     </div>
   </div>
 
-  <!-- Модальне вікно журналу відвідуваності на пару -->
+  <div id="override-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-height: 90vh;">
+      <h3>🔄 Об'єднання / Перенесення пар</h3>
+      <label>1. Оберіть пари з розкладу, які замінюються:</label>
+      <div id="override-source-lessons-list"></div>
+      <label>2. Куди переносимо / коли проводимо:</label>
+      <div style="display: flex; gap: 8px;">
+        <input type="text" id="ov-date" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)" style="flex: 2;">
+        <select id="ov-lesson-num" style="flex: 1;">
+          <option value="1">1 пара</option>
+          <option value="2">2 пара</option>
+          <option value="3">3 пара</option>
+          <option value="4">4 пара</option>
+          <option value="5">5 пара</option>
+        </select>
+      </div>
+      <label>3. Дисципліна та примітка:</label>
+      <select id="ov-subject" style="width: 100%; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; margin-bottom: 6px;">
+        <option value="">-- Оберіть дисципліну зі списку --</option>
+      </select>
+      <input type="text" id="ov-note" placeholder="Примітка" value="Об'єднана пара куратора">
+      <label>4. Аудиторія та викладач:</label>
+      <div style="display: flex; gap: 8px;">
+        <input type="text" id="ov-room" placeholder="Номер (напр. 1.215)" style="flex: 1;">
+        <select id="ov-teacher" style="flex: 2; text-overflow: ellipsis; white-space: nowrap; overflow: hidden;">
+          <option value="">-- Оберіть викладача --</option>
+        </select>
+      </div>
+      <label>5. Для кого ця пара:</label>
+      <select id="ov-subgroup">
+        <option value="0">👥 Обидві підгрупи (1 та 2 разом)</option>
+        <option value="1">1 підгрупа</option>
+        <option value="2">2 підгрупа</option>
+      </select>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeOverrideModal()">Скасувати</button>
+        <button class="btn-primary" style="background: #f1c40f; color: #171822;" onclick="saveOverride()">Застосувати заміну</button>
+      </div>
+    </div>
+  </div>
+
   <div id="attendance-modal" class="modal" style="display: none;">
     <div class="modal-content">
       <h3 id="modal-lesson-title">Журнал пари</h3>

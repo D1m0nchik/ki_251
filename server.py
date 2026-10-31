@@ -235,7 +235,28 @@ async def get_schedule(
         subgroup = user_row["subgroup"] if user_row else 1
         user_elective = user_row["elective_group"] if user_row else 0
 
-        # Фільтр за діапазоном дат
+        # Якщо увімкнено прапорець "Оригінальний розклад", вимикаємо всі фільтри підгруп і вибіркових
+        if original:
+            if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
+                query = f"""
+                    SELECT * FROM schedule 
+                    WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
+                      AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
+                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                """
+                base_rows = await conn.fetch(query, sdate.strip()[:10], edate.strip()[:10])
+            else:
+                query = f"""
+                    SELECT * FROM schedule 
+                    WHERE {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                      AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
+                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                """
+                base_rows = await conn.fetch(query)
+
+            return [dict(r) for r in base_rows]
+
+        # Стандартний режим (з урахуванням підгрупи та вибіркової дисципліни)
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -251,15 +272,12 @@ async def get_schedule(
                 query = f"""
                     SELECT * FROM schedule 
                     WHERE target_subgroup IN (0, $1)
-                      AND (elective_num = 0 OR $2 = 0 OR elective_num = $2)
+                      AND (COALESCE(elective_num, 0) = 0 OR $2 = 0 OR elective_num = $2)
                       AND {SQL_DATE_CONVERT} >= TO_DATE($3, 'DD.MM.YYYY')
                       AND {SQL_DATE_CONVERT} <= TO_DATE($4, 'DD.MM.YYYY')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
                 base_rows = await conn.fetch(query, subgroup, user_elective, s_clean, e_clean)
-
-            if original:
-                return [dict(r) for r in base_rows]
 
             overrides = await conn.fetch(f"""
                 SELECT * FROM schedule_overrides
@@ -267,7 +285,6 @@ async def get_schedule(
                   AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
             """, s_clean, e_clean)
         else:
-            # Ковзне вікно на 7 днів уперед від сьогодні
             if role == "starosta":
                 query = f"""
                     SELECT * FROM schedule 
@@ -280,15 +297,12 @@ async def get_schedule(
                 query = f"""
                     SELECT * FROM schedule 
                     WHERE target_subgroup IN (0, $1)
-                      AND (elective_num = 0 OR $2 = 0 OR elective_num = $2)
+                      AND (COALESCE(elective_num, 0) = 0 OR $2 = 0 OR elective_num = $2)
                       AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
                       AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
                 base_rows = await conn.fetch(query, subgroup, user_elective)
-
-            if original:
-                return [dict(r) for r in base_rows]
 
             overrides = await conn.fetch(f"""
                 SELECT * FROM schedule_overrides
@@ -303,8 +317,8 @@ async def get_schedule(
             if role != "starosta":
                 if ov_dict["target_subgroup"] != 0 and ov_dict["target_subgroup"] != subgroup:
                     continue
-                ov_el = ov_dict.get("elective_num", 0)
-                if ov_el and user_elective and ov_el != user_elective:
+                ov_el = ov_dict.get("elective_num", 0) or 0
+                if ov_el != 0 and user_elective != 0 and ov_el != user_elective:
                     continue
 
             if ov_dict.get("replaces_schedule_ids"):

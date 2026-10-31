@@ -27,23 +27,20 @@ def extract_meet_url(cell_element) -> str:
         
     return ""
 
-def determine_elective_num(cell_text: str) -> int:
-    """Визначає номер вибіркової дисципліни (0 - звичайна, 1 - вибіркова 1, 2 - вибіркова 2)."""
-    text_lower = cell_text.lower()
-    
-    # Специфічні назви дисциплін за вибором
-    if "теорія цифрових автоматів" in text_lower:
+def determine_elective_num(text: str) -> int:
+    """Визначає номер вибіркової дисципліни суворо для групи КІ-25-1."""
+    t = text.lower()
+    if "цифрових автоматів" in t:
         return 1
-    if "адміністрування систем управління контентом" in text_lower or "можливості ші" in text_lower:
+    if "управління контентом" in t:
         return 2
-
-    # Якщо пара позначена зірочкою
-    if text_lower.strip().startswith("*"):
-        return 1
-
     return 0
 
 async def fetch_and_save_schedule(sdate: str, edate: str):
+    """
+    Завантажує та розбирає розклад з сайту ІФНТУНГ за діапазоном дат sdate та edate.
+    Зберігає аудиторії, викладачів, посилання Google Meet та номери вибіркових дисциплін.
+    """
     params = {
         "group": GROUP_NAME,
         "sdate": sdate,
@@ -72,6 +69,7 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
 
     async with pool.acquire() as conn:
         for row in rows:
+            # Обробка рядка дати
             date_header = row.find(["th", "td"], class_=re.compile(r"date|day|header", re.I))
             if date_header and any(d in date_header.get_text() for d in [".202", ".2025", ".2026"]):
                 raw_text = date_header.get_text().strip()
@@ -87,6 +85,7 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
             if len(cells) < 2:
                 continue
 
+            # Номер та часові межі пари
             lesson_cell = cells[0].get_text().strip()
             num_match = re.search(r"\d+", lesson_cell)
             if not num_match:
@@ -106,9 +105,10 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
             if not cell_text:
                 continue
 
+            # Вилучення онлайн-посилання
             meet_url = extract_meet_url(content_cell)
-            elective_num = determine_elective_num(cell_text)
 
+            # Визначення типу заняття
             lesson_type = "Лек"
             if "лаб" in cell_text.lower():
                 lesson_type = "Лаб"
@@ -117,6 +117,9 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
 
             lines = [l.strip() for l in cell_text.split("\n") if l.strip()]
             subject = lines[0] if lines else "Заняття"
+
+            # Визначення вибіркової пари (1 або 2)
+            elective_num = determine_elective_num(subject + " " + cell_text)
 
             teacher = ""
             room = ""
@@ -130,12 +133,14 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
             if not room and ("дистанційно" in cell_text.lower() or meet_url):
                 room = "Дистанційно"
 
+            # Визначення підгрупи
             target_subgroup = 0
             if "1 підгр" in cell_text.lower() or "підгрупа 1" in cell_text.lower():
                 target_subgroup = 1
             elif "2 підгр" in cell_text.lower() or "підгрупа 2" in cell_text.lower():
                 target_subgroup = 2
 
+            # Запис пари до бази даних
             await conn.execute("""
                 INSERT INTO schedule (
                     date_str, day_of_week, lesson_number, time_start, time_end,

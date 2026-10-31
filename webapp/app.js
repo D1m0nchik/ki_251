@@ -322,7 +322,6 @@ function renderSchedule(lessonsList) {
         sgTag = `<span style="font-size: 11px; background: rgba(243, 156, 18, 0.2); color: #f39c12; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">2 підгр.</span>`;
       }
 
-      // Позначка вибіркової дисципліни
       let electiveTag = "";
       if (item.elective_num && item.elective_num > 0) {
         electiveTag = `<span style="font-size: 11px; background: rgba(253, 121, 168, 0.18); color: #fd79a8; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">⭐ Вибіркова ${item.elective_num}</span>`;
@@ -630,18 +629,23 @@ async function openOverrideModal() {
 
   listContainer.innerHTML = "";
   
-  allScheduleData.filter(l => !l.is_custom_override).forEach(l => {
-    const item = document.createElement("label");
-    const roomInfo = l.room ? ` | 🏛 ${l.room}` : "";
-    const sgInfo = l.target_subgroup === 0 ? "Всі" : `${l.target_subgroup} підгр.`;
-    const elInfo = l.elective_num ? ` [Вибір ${l.elective_num}]` : "";
+  const availableLessons = allScheduleData.filter(l => !l.is_custom_override);
+  if (availableLessons.length === 0) {
+    listContainer.innerHTML = "<p style='color: #8e8ea0; font-size: 12px; margin: 6px 0; text-align: center;'>Немає занять у поточному вікні розкладу для заміни</p>";
+  } else {
+    availableLessons.forEach(l => {
+      const item = document.createElement("label");
+      const roomInfo = l.room ? ` | 🏛 ${l.room}` : "";
+      const sgInfo = l.target_subgroup === 0 ? "Всі" : `${l.target_subgroup} підгр.`;
+      const elInfo = l.elective_num ? ` [Вибір ${l.elective_num}]` : "";
 
-    item.innerHTML = `
-      <input type="checkbox" name="replace_lesson" value="${l.id}">
-      <span><b>${l.date_str}</b> (${l.lesson_number} пара): ${l.subject} [${sgInfo}]${elInfo}${roomInfo}</span>
-    `;
-    listContainer.appendChild(item);
-  });
+      item.innerHTML = `
+        <input type="checkbox" name="replace_lesson" value="${l.id}">
+        <span><b>${l.date_str}</b> (${l.lesson_number} пара): ${l.subject} [${sgInfo}]${elInfo}${roomInfo}</span>
+      `;
+      listContainer.appendChild(item);
+    });
+  }
 
   try {
     const meta = await apiRequest("/api/schedule/meta");
@@ -929,7 +933,6 @@ async function loadGroupManagement() {
         </div>
 
         <div style="display: flex; gap: 8px;">
-          <!-- Селектор підгрупи -->
           <div style="flex: 1;">
             <label style="font-size: 11px; color: #8e8ea0; display: block; margin-bottom: 4px;">Підгрупа:</label>
             <select onchange="changeSubgroup(${s.telegram_id}, this.value)" style="width: 100%; background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
@@ -938,7 +941,6 @@ async function loadGroupManagement() {
             </select>
           </div>
 
-          <!-- Селектор вибіркової дисципліни (тільки для старости) -->
           <div style="flex: 1;">
             <label style="font-size: 11px; color: #8e8ea0; display: block; margin-bottom: 4px;">Вибіркова:</label>
             <select onchange="changeElective(${s.telegram_id}, this.value)" style="width: 100%; background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">

@@ -322,9 +322,36 @@ function renderSchedule(lessonsList) {
         sgTag = `<span style="font-size: 11px; background: rgba(243, 156, 18, 0.2); color: #f39c12; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">2 підгр.</span>`;
       }
 
+      // Обробка дистанційного заняття та посилання Google Meet
+      const meetUrl = (item.meet_url || "").trim();
+      const isOnline = meetUrl.length > 0 || 
+                       (item.room && item.room.toLowerCase().includes("дистанційн")) ||
+                       (item.subject && item.subject.toLowerCase().includes("дистанційн"));
+
+      let onlineBadge = isOnline 
+        ? `<div class="online-badge">🏠 Дистанційно</div>` 
+        : "";
+
+      let meetBtnHtml = "";
+      if (meetUrl) {
+        meetBtnHtml = `
+          <a href="${meetUrl}" target="_blank" rel="noopener noreferrer" 
+             onclick="if(window.Telegram?.WebApp?.openLink){ window.Telegram.WebApp.openLink('${meetUrl}'); return false; }"
+             class="btn-meet-join">
+            📹 Приєднатися до Google Meet
+          </a>
+        `;
+      }
+
+      let roomDisplay = item.room || "";
+      if (isOnline && (!roomDisplay || roomDisplay.toLowerCase().includes("дистанційн"))) {
+        roomDisplay = "Онлайн (Google Meet)";
+      }
+
       card.className = `card lesson-card ${customClass} ${item.is_replacement ? 'replacement' : ''}`;
       card.innerHTML = `
         ${customBadge}
+        ${onlineBadge}
         ${replacementHtml}
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <h4 style="margin:0 0 6px 0;">${item.lesson_number} пара (${item.time_start} - ${item.time_end}) ${sgTag}</h4>
@@ -335,8 +362,9 @@ function renderSchedule(lessonsList) {
         </div>
         <p style="margin:0 0 4px 0;"><strong>${item.subject}</strong> (${item.lesson_type})</p>
         <p style="margin:0; font-size: 13px; color: var(--text-muted);">
-          🏛 ${item.room} | 👨‍🏫 ${item.teacher}
+          🏛 ${roomDisplay} | 👨‍🏫 ${item.teacher}
         </p>
+        ${meetBtnHtml}
       `;
       daySection.appendChild(card);
     });
@@ -637,6 +665,9 @@ async function openOverrideModal() {
   const dInput = document.getElementById("ov-date");
   if (dInput) dInput.value = `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
 
+  const meetInput = document.getElementById("ov-meet");
+  if (meetInput) meetInput.value = "";
+
   modal.style.display = "flex";
   document.body.style.overflow = "hidden";
 }
@@ -660,6 +691,7 @@ async function saveOverride() {
   const title_note = document.getElementById("ov-note").value.trim();
   let rawRoom = document.getElementById("ov-room").value.trim();
   const teacher = document.getElementById("ov-teacher").value.trim();
+  const meet_url = document.getElementById("ov-meet") ? document.getElementById("ov-meet").value.trim() : "";
   const target_subgroup = parseInt(document.getElementById("ov-subgroup").value);
 
   if (target_date.length < 10 || !subject) {
@@ -669,8 +701,12 @@ async function saveOverride() {
 
   let formattedRoom = "";
   if (rawRoom) {
-    rawRoom = rawRoom.replace(/^(ауд\.?|ауд)\s*/i, "").replace(/\.?ауд\.?$/i, "").trim();
-    formattedRoom = `${rawRoom}.ауд.`;
+    if (rawRoom.toLowerCase().includes("дистанцій")) {
+      formattedRoom = "Дистанційно";
+    } else {
+      rawRoom = rawRoom.replace(/^(ауд\.?|ауд)\s*/i, "").replace(/\.?ауд\.?$/i, "").trim();
+      formattedRoom = `${rawRoom}.ауд.`;
+    }
   }
 
   try {
@@ -683,6 +719,7 @@ async function saveOverride() {
       lesson_type: "Лаб",
       teacher,
       room: formattedRoom,
+      meet_url,
       target_subgroup
     });
 

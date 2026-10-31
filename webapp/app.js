@@ -304,7 +304,7 @@ function renderSchedule(lessonsList) {
         : "";
 
       let replacementHtml = item.is_replacement 
-        ? `<div class="replacement-badge" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; color: #ff6b81; font-weight: 600; font-size: 12px;">
+        ? `<div class="replacement-badge" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; padding: 6px 10px; border-radius: 6px; margin-bottom: 4px; color: #ff6b81; font-weight: 600; font-size: 12px;">
             🔴 ${item.replacement_note || "Увага! Заміна"}
            </div>` 
         : "";
@@ -313,18 +313,20 @@ function renderSchedule(lessonsList) {
         ? `<button class="btn-journal" onclick="openAttendanceModal(${item.id}, '${item.subject.replace(/'/g, "\\'")}')">📝 Журнал</button>`
         : "";
 
+      // Акуратний бейдж підгрупи
       let sgTag = "";
       if (item.target_subgroup === 0) {
-        sgTag = `<span style="font-size: 11px; background: rgba(46, 204, 113, 0.15); color: #2ecc71; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">Обидві підгр.</span>`;
+        sgTag = `<span class="tag-sg-both">Обидві підгр.</span>`;
       } else if (item.target_subgroup === 1) {
-        sgTag = `<span style="font-size: 11px; background: rgba(108, 92, 231, 0.2); color: #a29bfe; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">1 підгр.</span>`;
+        sgTag = `<span class="tag-sg-1">1 підгрупа</span>`;
       } else if (item.target_subgroup === 2) {
-        sgTag = `<span style="font-size: 11px; background: rgba(243, 156, 18, 0.2); color: #f39c12; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">2 підгр.</span>`;
+        sgTag = `<span class="tag-sg-2">2 підгрупа</span>`;
       }
 
+      // Акуратний бейдж вибіркової дисципліни
       let electiveTag = "";
       if (item.elective_num && item.elective_num > 0) {
-        electiveTag = `<span style="font-size: 11px; background: rgba(253, 121, 168, 0.18); color: #fd79a8; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">⭐ Вибіркова ${item.elective_num}</span>`;
+        electiveTag = `<span class="tag-elective">★ Вибіркова ${item.elective_num}</span>`;
       }
 
       const meetUrl = (item.meet_url || "").trim();
@@ -357,14 +359,26 @@ function renderSchedule(lessonsList) {
         ${customBadge}
         ${onlineBadge}
         ${replacementHtml}
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h4 style="margin:0 0 6px 0;">${item.lesson_number} пара (${item.time_start} - ${item.time_end}) ${sgTag} ${electiveTag}</h4>
+        
+        <!-- Верхній рядок: час пари та кнопка журналу старости -->
+        <div class="lesson-top-row">
+          <h4 class="lesson-time-title">${item.lesson_number} пара (${item.time_start} - ${item.time_end})</h4>
           <div style="display:flex; gap:6px; align-items:center;">
             ${deleteOverrideBtn}
             ${starostaBtn}
           </div>
         </div>
-        <p style="margin:0 0 4px 0;"><strong>${item.subject}</strong> (${item.lesson_type})</p>
+
+        <!-- Окремий рядок для бейджів (підгрупа + вибіркова), щоб текст ніколи не злипався -->
+        <div class="lesson-badges-wrap">
+          ${sgTag}
+          ${electiveTag}
+        </div>
+
+        <!-- Назва предмета та викладач -->
+        <p style="margin:2px 0 2px 0; font-size:14px; line-height:1.35;">
+          <strong>${item.subject}</strong> (${item.lesson_type})
+        </p>
         <p style="margin:0; font-size: 13px; color: var(--text-muted);">
           🏛 ${roomDisplay} | 👨‍🏫 ${item.teacher}
         </p>
@@ -526,7 +540,7 @@ function renderDayMatrixTable(data) {
 
   lessons.forEach(l => {
     const shortSubj = l.subject.length > 15 ? l.subject.substring(0, 13) + '..' : l.subject;
-    const elMark = l.elective_num ? ` ⭐${l.elective_num}` : '';
+    const elMark = l.elective_num ? ` ★${l.elective_num}` : '';
     html += `
       <th>
         <div style="font-size: 11px; color:#a29bfe;">${l.lesson_number} пара${elMark}</div>
@@ -945,8 +959,8 @@ async function loadGroupManagement() {
             <label style="font-size: 11px; color: #8e8ea0; display: block; margin-bottom: 4px;">Вибіркова:</label>
             <select onchange="changeElective(${s.telegram_id}, this.value)" style="width: 100%; background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
               <option value="0" ${electiveVal === 0 ? 'selected' : ''}>Не обрано (обидві)</option>
-              <option value="1" ${electiveVal === 1 ? 'selected' : ''}>⭐ Вибіркова №1</option>
-              <option value="2" ${electiveVal === 2 ? 'selected' : ''}>⭐ Вибіркова №2</option>
+              <option value="1" ${electiveVal === 1 ? 'selected' : ''}>★ Вибіркова №1</option>
+              <option value="2" ${electiveVal === 2 ? 'selected' : ''}>★ Вибіркова №2</option>
             </select>
           </div>
         </div>

@@ -13,7 +13,6 @@ def extract_meet_url(cell_element) -> str:
     if not cell_element:
         return ""
     
-    # 1. Шукаємо через теги <a>
     for a in cell_element.find_all("a", href=True):
         href = a["href"].strip()
         if any(domain in href for domain in ["meet.google.com", "zoom.us", "teams.microsoft.com"]):
@@ -21,7 +20,6 @@ def extract_meet_url(cell_element) -> str:
         if href.startswith("http://") or href.startswith("https://"):
             return href
             
-    # 2. Шукаємо регулярним виразом у тексті
     text = cell_element.get_text()
     match = re.search(r'https?://[^\s<>"]+', text)
     if match:
@@ -29,11 +27,23 @@ def extract_meet_url(cell_element) -> str:
         
     return ""
 
+def determine_elective_num(cell_text: str) -> int:
+    """Визначає номер вибіркової дисципліни (0 - звичайна, 1 - вибіркова 1, 2 - вибіркова 2)."""
+    text_lower = cell_text.lower()
+    
+    # Специфічні назви дисциплін за вибором
+    if "теорія цифрових автоматів" in text_lower:
+        return 1
+    if "адміністрування систем управління контентом" in text_lower or "можливості ші" in text_lower:
+        return 2
+
+    # Якщо пара позначена зірочкою
+    if text_lower.strip().startswith("*"):
+        return 1
+
+    return 0
+
 async def fetch_and_save_schedule(sdate: str, edate: str):
-    """
-    Завантажує та розбирає розклад з сайту ІФНТУНГ за діапазоном дат sdate та edate.
-    Зберігає аудиторії, викладачів та витягує Google Meet посилання.
-    """
     params = {
         "group": GROUP_NAME,
         "sdate": sdate,
@@ -62,7 +72,6 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
 
     async with pool.acquire() as conn:
         for row in rows:
-            # Обробка рядка-заголовка дати
             date_header = row.find(["th", "td"], class_=re.compile(r"date|day|header", re.I))
             if date_header and any(d in date_header.get_text() for d in [".202", ".2025", ".2026"]):
                 raw_text = date_header.get_text().strip()
@@ -78,7 +87,6 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
             if len(cells) < 2:
                 continue
 
-            # Номер та час пари
             lesson_cell = cells[0].get_text().strip()
             num_match = re.search(r"\d+", lesson_cell)
             if not num_match:
@@ -98,10 +106,9 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
             if not cell_text:
                 continue
 
-            # Посилання на Meet / Zoom
             meet_url = extract_meet_url(content_cell)
+            elective_num = determine_elective_num(cell_text)
 
-            # Розпізнавання типу та назви
             lesson_type = "Лек"
             if "лаб" in cell_text.lower():
                 lesson_type = "Лаб"
@@ -123,25 +130,24 @@ async def fetch_and_save_schedule(sdate: str, edate: str):
             if not room and ("дистанційно" in cell_text.lower() or meet_url):
                 room = "Дистанційно"
 
-            # Визначення підгрупи
             target_subgroup = 0
             if "1 підгр" in cell_text.lower() or "підгрупа 1" in cell_text.lower():
                 target_subgroup = 1
             elif "2 підгр" in cell_text.lower() or "підгрупа 2" in cell_text.lower():
                 target_subgroup = 2
 
-            # Запис у БД
             await conn.execute("""
                 INSERT INTO schedule (
                     date_str, day_of_week, lesson_number, time_start, time_end,
-                    subject, lesson_type, teacher, room, target_subgroup, meet_url
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    subject, lesson_type, teacher, room, target_subgroup, meet_url, elective_num
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 ON CONFLICT (date_str, lesson_number, target_subgroup) 
                 DO UPDATE SET 
                     subject = EXCLUDED.subject,
                     lesson_type = EXCLUDED.lesson_type,
                     teacher = EXCLUDED.teacher,
                     room = EXCLUDED.room,
-                    meet_url = EXCLUDED.meet_url
+                    meet_url = EXCLUDED.meet_url,
+                    elective_num = EXCLUDED.elective_num
             """, current_date_str, current_dow, lesson_number, time_start, time_end,
-                 subject, lesson_type, teacher, room, target_subgroup, meet_url)
+                 subject, lesson_type, teacher, room, target_subgroup, meet_url, elective_num)

@@ -12,7 +12,14 @@ let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0; // 0 - всі, 1 - 1 підгрупа, 2 - 2 підгрупа
 
-let activeSearchRange = null; // { sStr: string, eStr: string }
+let activeSearchRange = null;
+let showOriginalSchedule = false;
+
+// Стан інтерактивного календаря
+let calCurrentYear = 2026;
+let calCurrentMonth = 10; // 1-12
+let calMarkedDays = [];
+let activeMatrixDateStr = null;
 
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
@@ -84,8 +91,16 @@ async function init() {
       const deadlineBtn = document.getElementById("starosta-create-deadline-btn");
       if (deadlineBtn) deadlineBtn.style.display = "block";
 
-      loadGroupManagement().catch(e => console.error(e));
-      loadGroupStats().catch(e => console.error(e));
+      const overrideBtn = document.getElementById("starosta-override-btn");
+      if (overrideBtn) overrideBtn.style.display = "block";
+
+      const now = new Date();
+      calCurrentYear = now.getFullYear();
+      calCurrentMonth = now.getMonth() + 1;
+
+      loadGroupManagement().catch(e => console.error("loadGroupManagement error:", e));
+      loadGroupStats().catch(e => console.error("loadGroupStats error:", e));
+      loadCalendarMonth(calCurrentYear, calCurrentMonth).catch(e => console.error("loadCalendarMonth error:", e));
     }
 
     if (!currentUser.full_name || currentUser.full_name.split(" ").length < 2) {
@@ -97,7 +112,6 @@ async function init() {
 
   await refreshAllData();
 
-  // Автооновлення кожні 20 секунд
   setInterval(() => {
     refreshAllData(true);
   }, 20000);
@@ -117,10 +131,19 @@ async function refreshAllData(isBackground = false) {
     loadMyStats().catch(e => console.error(e));
     if (currentUser && currentUser.role === "starosta") {
       loadGroupStats().catch(e => console.error(e));
+      if (!isBackground) {
+        loadCalendarMonth(calCurrentYear, calCurrentMonth).catch(e => console.error(e));
+      }
     }
   } catch (e) {
     console.error("Помилка фонового оновлення:", e);
   }
+}
+
+function onOriginalToggleChange() {
+  const toggle = document.getElementById("show-original-toggle");
+  showOriginalSchedule = toggle ? toggle.checked : false;
+  loadSchedule();
 }
 
 async function loadSchedule(isBackground = false) {
@@ -131,21 +154,31 @@ async function loadSchedule(isBackground = false) {
     container.innerHTML = "<p class='loading'>Завантаження розкладу...</p>";
   }
 
-  let url = "/api/schedule";
+  let url = `/api/schedule?original=${showOriginalSchedule}`;
   if (activeSearchRange && activeSearchRange.sStr && activeSearchRange.eStr) {
-    url = `/api/schedule?sdate=${encodeURIComponent(activeSearchRange.sStr)}&edate=${encodeURIComponent(activeSearchRange.eStr)}`;
+    url = `/api/schedule?sdate=${encodeURIComponent(activeSearchRange.sStr)}&edate=${encodeURIComponent(activeSearchRange.eStr)}&original=${showOriginalSchedule}`;
   }
 
-  allScheduleData = await apiRequest(url);
+  try {
+    allScheduleData = await apiRequest(url);
 
-  if (!allScheduleData || allScheduleData.length === 0) {
-    if (!activeSearchRange) {
-      await syncFullMonth();
-      return;
+    const title = document.getElementById("schedule-view-title");
+    if (title) {
+      const baseTitle = activeSearchRange ? `Розклад: ${activeSearchRange.sStr} — ${activeSearchRange.eStr}` : "Розклад: на сьогодні та найближчі дні";
+      title.innerHTML = showOriginalSchedule ? `${baseTitle} <span style="font-size: 12px; color: #8e8ea0; font-weight: 500;">[Оригінал сайту]</span>` : baseTitle;
     }
-  }
 
-  renderSchedule(allScheduleData);
+    if (!allScheduleData || allScheduleData.length === 0) {
+      if (!activeSearchRange) {
+        await syncFullMonth();
+        return;
+      }
+    }
+
+    renderSchedule(allScheduleData);
+  } catch (err) {
+    container.innerHTML = `<p style="color: #ff4757; text-align: center;">Не вдалося завантажити розклад: ${err.message}</p>`;
+  }
 }
 
 function showDefaultScheduleFromToday() {
@@ -155,9 +188,6 @@ function showDefaultScheduleFromToday() {
   const eInput = document.getElementById("filter-edate");
   if (sInput) sInput.value = "";
   if (eInput) eInput.value = "";
-
-  const title = document.getElementById("schedule-view-title");
-  if (title) title.innerText = "Розклад: на сьогодні та найближчі дні";
 
   loadSchedule();
 }
@@ -190,7 +220,10 @@ async function applyLocalDateFilter() {
     });
 
     const title = document.getElementById("schedule-view-title");
-    if (title) title.innerText = `Розклад: ${sdateStr} — ${edateStr}`;
+    if (title) {
+      const baseTitle = `Розклад: ${sdateStr} — ${edateStr}`;
+      title.innerHTML = showOriginalSchedule ? `${baseTitle} <span style="font-size: 12px; color: #8e8ea0; font-weight: 500;">[Оригінал сайту]</span>` : baseTitle;
+    }
 
     renderSchedule(allScheduleData);
   } catch (err) {
@@ -254,8 +287,17 @@ function renderSchedule(lessonsList) {
 
     lessons.forEach(item => {
       const card = document.createElement("div");
-      card.className = `card lesson-card ${item.is_replacement ? 'replacement' : ''}`;
-      
+      const isCustom = item.is_custom_override;
+      const customClass = isCustom ? "custom-override" : "";
+
+      let customBadge = isCustom 
+        ? `<div class="override-badge">${item.title_note || "Об'єднана пара"}</div>` 
+        : "";
+
+      let deleteOverrideBtn = (isCustom && currentUser && currentUser.role === "starosta")
+        ? `<button onclick="deleteOverrideItem(${item.id})" style="background:none; border:none; color:#8e8ea0; font-size:14px; cursor:pointer; padding:0 4px;" title="Скасувати заміну">✕</button>`
+        : "";
+
       let replacementHtml = item.is_replacement 
         ? `<div class="replacement-badge" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; color: #ff6b81; font-weight: 600; font-size: 12px;">
             🔴 ${item.replacement_note || "Увага! Заміна"}
@@ -267,16 +309,24 @@ function renderSchedule(lessonsList) {
         : "";
 
       let sgTag = "";
-      if (currentUser && currentUser.role === "starosta") {
-        if (item.target_subgroup === 1) sgTag = `<span style="font-size: 11px; background: rgba(108, 92, 231, 0.2); color: #a29bfe; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">1 підгр.</span>`;
-        else if (item.target_subgroup === 2) sgTag = `<span style="font-size: 11px; background: rgba(243, 156, 18, 0.2); color: #f39c12; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">2 підгр.</span>`;
+      if (item.target_subgroup === 0) {
+        sgTag = `<span style="font-size: 11px; background: rgba(46, 204, 113, 0.15); color: #2ecc71; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">Обидві підгр.</span>`;
+      } else if (item.target_subgroup === 1) {
+        sgTag = `<span style="font-size: 11px; background: rgba(108, 92, 231, 0.2); color: #a29bfe; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">1 підгр.</span>`;
+      } else if (item.target_subgroup === 2) {
+        sgTag = `<span style="font-size: 11px; background: rgba(243, 156, 18, 0.2); color: #f39c12; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">2 підгр.</span>`;
       }
 
+      card.className = `card lesson-card ${customClass} ${item.is_replacement ? 'replacement' : ''}`;
       card.innerHTML = `
+        ${customBadge}
         ${replacementHtml}
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <h4 style="margin:0 0 6px 0;">${item.lesson_number} пара (${item.time_start} - ${item.time_end}) ${sgTag}</h4>
-          ${starostaBtn}
+          <div style="display:flex; gap:6px; align-items:center;">
+            ${deleteOverrideBtn}
+            ${starostaBtn}
+          </div>
         </div>
         <p style="margin:0 0 4px 0;"><strong>${item.subject}</strong> (${item.lesson_type})</p>
         <p style="margin:0; font-size: 13px; color: var(--text-muted);">
@@ -287,6 +337,371 @@ function renderSchedule(lessonsList) {
     });
 
     container.appendChild(daySection);
+  }
+}
+
+// =========================================================
+// ЛОГІКА КАЛЕНДАРНОГО ЖУРНАЛУ ТА ШАХМАТКИ
+// =========================================================
+
+function switchJournalSubTab(subTab) {
+  const calView = document.getElementById("journal-view-calendar");
+  const statsView = document.getElementById("journal-view-stats");
+  const btnCal = document.getElementById("subtab-btn-cal");
+  const btnStats = document.getElementById("subtab-btn-stats");
+
+  if (!calView || !statsView) return;
+
+  if (subTab === "cal") {
+    calView.style.display = "block";
+    statsView.style.display = "none";
+    if (btnCal) btnCal.classList.add("active");
+    if (btnStats) btnStats.classList.remove("active");
+  } else {
+    calView.style.display = "none";
+    statsView.style.display = "block";
+    if (btnCal) btnCal.classList.remove("active");
+    if (btnStats) btnStats.classList.add("active");
+    loadGroupStats().catch(e => console.error(e));
+  }
+}
+
+const MONTH_NAMES_UA = [
+  "Січень", "Лютий", "Березень", "Квітень", "Травень", "Червень",
+  "Липень", "Серпень", "Вересень", "Жовтень", "Листопад", "Грудень"
+];
+
+async function loadCalendarMonth(year, month) {
+  calCurrentYear = year;
+  calCurrentMonth = month;
+
+  const title = document.getElementById("cal-month-title");
+  if (title) title.innerText = `${MONTH_NAMES_UA[month - 1]} ${year}`;
+
+  try {
+    const meta = await apiRequest(`/api/attendance/calendar_meta?year=${year}&month=${month}`);
+    calMarkedDays = meta.marked_days || [];
+  } catch (err) {
+    calMarkedDays = [];
+  }
+
+  renderCalendarGrid();
+}
+
+function changeCalendarMonth(delta) {
+  calCurrentMonth += delta;
+  if (calCurrentMonth > 12) {
+    calCurrentMonth = 1;
+    calCurrentYear += 1;
+  } else if (calCurrentMonth < 1) {
+    calCurrentMonth = 12;
+    calCurrentYear -= 1;
+  }
+  loadCalendarMonth(calCurrentYear, calCurrentMonth);
+}
+
+function renderCalendarGrid() {
+  const grid = document.getElementById("calendar-days-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  const firstDay = new Date(calCurrentYear, calCurrentMonth - 1, 1);
+  const totalDays = new Date(calCurrentYear, calCurrentMonth, 0).getDate();
+
+  let startOffset = firstDay.getDay() - 1;
+  if (startOffset === -1) startOffset = 6;
+
+  for (let i = 0; i < startOffset; i++) {
+    const emptyCell = document.createElement("div");
+    emptyCell.className = "cal-day-cell empty";
+    grid.appendChild(emptyCell);
+  }
+
+  const today = new Date();
+  const isCurrentMonthNow = (today.getFullYear() === calCurrentYear && (today.getMonth() + 1) === calCurrentMonth);
+
+  for (let d = 1; d <= totalDays; d++) {
+    const cell = document.createElement("div");
+    cell.className = "cal-day-cell active-day";
+    if (isCurrentMonthNow && today.getDate() === d) {
+      cell.classList.add("today");
+    }
+
+    const hasDot = calMarkedDays.includes(d);
+    const dotHtml = hasDot ? `<div class="cal-dot"></div>` : "";
+
+    cell.innerHTML = `<span>${d}</span>${dotHtml}`;
+    cell.onclick = () => openDayMatrix(d, calCurrentMonth, calCurrentYear);
+    grid.appendChild(cell);
+  }
+}
+
+async function openDayMatrix(day, month, year) {
+  const pad = n => String(n).padStart(2, '0');
+  const dateStr = `${pad(day)}.${pad(month)}.${year}`;
+  activeMatrixDateStr = dateStr;
+
+  const calBox = document.getElementById("cal-picker-box");
+  const matrixBox = document.getElementById("day-matrix-box");
+  if (calBox) calBox.style.display = "none";
+  if (matrixBox) matrixBox.style.display = "block";
+
+  const dObj = new Date(year, month - 1, day);
+  const DAYS_UA = ["Неділя", "Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота"];
+
+  const dayTitleElem = document.getElementById("matrix-day-title");
+  if (dayTitleElem) dayTitleElem.innerText = `${day} ${MONTH_NAMES_UA[month - 1].toLowerCase()}`;
+
+  const dayDowElem = document.getElementById("matrix-day-dow");
+  if (dayDowElem) dayDowElem.innerText = DAYS_UA[dObj.getDay()];
+
+  const container = document.getElementById("day-matrix-table-container");
+  if (container) container.innerHTML = "<p class='loading'>Отримання даних на цей день...</p>";
+
+  try {
+    const data = await apiRequest(`/api/attendance/day_matrix?date_str=${dateStr}`);
+    renderDayMatrixTable(data);
+  } catch (err) {
+    if (container) container.innerHTML = `<p style="color:#ff4757; padding: 10px;">${err.message}</p>`;
+  }
+}
+
+function backToCalendarPicker() {
+  const matrixBox = document.getElementById("day-matrix-box");
+  const calBox = document.getElementById("cal-picker-box");
+  if (matrixBox) matrixBox.style.display = "none";
+  if (calBox) calBox.style.display = "block";
+  loadCalendarMonth(calCurrentYear, calCurrentMonth);
+}
+
+function renderDayMatrixTable(data) {
+  const container = document.getElementById("day-matrix-table-container");
+  if (!container) return;
+
+  const students = data.students || [];
+  const lessons = data.lessons || [];
+  const matrix = data.matrix || {};
+
+  if (lessons.length === 0) {
+    container.innerHTML = "<p style='color: #8e8ea0; padding: 20px; text-align: center;'>На цей день занять у розкладі немає.</p>";
+    return;
+  }
+
+  let html = `<table class="matrix-table"><thead><tr><th class="st-col">Студент</th>`;
+
+  lessons.forEach(l => {
+    const shortSubj = l.subject.length > 15 ? l.subject.substring(0, 13) + '..' : l.subject;
+    html += `
+      <th>
+        <div style="font-size: 11px; color:#a29bfe;">${l.lesson_number} пара</div>
+        <div style="font-size: 12px; margin: 2px 0;">${shortSubj}</div>
+        <div style="font-size: 10px; color:#8e8ea0;">${l.time_start}</div>
+      </th>
+    `;
+  });
+
+  html += `</tr></thead><tbody>`;
+
+  const statusIcons = {
+    "present": "✓",
+    "absent": "Н",
+    "late": "О",
+    "excused": "П"
+  };
+
+  const statusClasses = {
+    "present": "cell-pres",
+    "absent": "cell-abs",
+    "late": "cell-late",
+    "excused": "cell-exc"
+  };
+
+  students.forEach((st, idx) => {
+    html += `<tr><td class="st-col">${idx + 1}. ${st.full_name}</td>`;
+
+    lessons.forEach(l => {
+      const isOtherSubgroup = (l.target_subgroup !== 0 && l.target_subgroup !== st.subgroup);
+      if (isOtherSubgroup) {
+        html += `<td><span style="color:#4a4b60;">—</span></td>`;
+        return;
+      }
+
+      const key = `${l.id}_${st.telegram_id}`;
+      const status = matrix[key] || "none";
+      const icon = statusIcons[status] || "—";
+      const cls = statusClasses[status] || "cell-none";
+
+      html += `
+        <td>
+          <button class="matrix-cell-btn ${cls}" onclick="onMatrixCellClick(${l.id}, ${st.telegram_id}, this)">
+            ${icon}
+          </button>
+        </td>
+      `;
+    });
+
+    html += `</tr>`;
+  });
+
+  html += `</tbody></table>`;
+  container.innerHTML = html;
+}
+
+async function onMatrixCellClick(scheduleId, tgId, btn) {
+  try {
+    const res = await apiRequest("/api/attendance/cell_toggle", "POST", {
+      schedule_id: scheduleId,
+      telegram_id: tgId
+    });
+
+    const statusIcons = { "present": "✓", "absent": "Н", "late": "О", "excused": "П" };
+    const statusClasses = { "present": "cell-pres", "absent": "cell-abs", "late": "cell-late", "excused": "cell-exc" };
+
+    btn.className = `matrix-cell-btn ${statusClasses[res.new_status]}`;
+    btn.innerText = statusIcons[res.new_status];
+  } catch (err) {
+    alert("Помилка відмітки: " + err.message);
+  }
+}
+
+async function downloadMatrixReport() {
+  try {
+    if (tg && tg.showPopup) {
+      tg.showPopup({ message: "Формуємо відомість та надсилаємо у чат із ботом..." });
+    }
+    
+    const res = await apiRequest(`/api/attendance/send_to_telegram?month=${calCurrentMonth}&year=${calCurrentYear}`, "POST");
+    
+    if (tg && tg.showPopup) {
+      tg.showPopup({ message: `✅ Відомість надіслано в чат із ботом!\nФайл: ${res.filename}` });
+    } else {
+      alert("Файл надіслано в чат бота!");
+    }
+  } catch (err) {
+    alert("Помилка формування відомості: " + err.message);
+  }
+}
+
+// =========================================================
+
+async function openOverrideModal() {
+  const modal = document.getElementById("override-modal");
+  const listContainer = document.getElementById("override-source-lessons-list");
+  const teacherSelect = document.getElementById("ov-teacher");
+  const subjectSelect = document.getElementById("ov-subject");
+  if (!modal || !listContainer) return;
+
+  listContainer.innerHTML = "";
+  
+  allScheduleData.filter(l => !l.is_custom_override).forEach(l => {
+    const item = document.createElement("label");
+    const roomInfo = l.room ? ` | 🏛 ${l.room}` : "";
+    const sgInfo = l.target_subgroup === 0 ? "Всі" : `${l.target_subgroup} підгр.`;
+
+    item.innerHTML = `
+      <input type="checkbox" name="replace_lesson" value="${l.id}">
+      <span><b>${l.date_str}</b> (${l.lesson_number} пара): ${l.subject} [${sgInfo}]${roomInfo}</span>
+    `;
+    listContainer.appendChild(item);
+  });
+
+  try {
+    const meta = await apiRequest("/api/schedule/meta");
+    
+    if (subjectSelect && meta.subjects) {
+      subjectSelect.innerHTML = '<option value="">-- Оберіть дисципліну зі списку --</option>';
+      meta.subjects.forEach(s => {
+        const opt = document.createElement("option");
+        opt.value = s;
+        opt.innerText = s;
+        subjectSelect.appendChild(opt);
+      });
+    }
+
+    if (teacherSelect && meta.teachers) {
+      teacherSelect.innerHTML = '<option value="">-- Оберіть викладача --</option>';
+      meta.teachers.forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.innerText = t;
+        teacherSelect.appendChild(opt);
+      });
+    }
+  } catch (err) {
+    console.error("Не вдалося завантажити довідник пар:", err);
+  }
+
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const dInput = document.getElementById("ov-date");
+  if (dInput) dInput.value = `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+
+  modal.style.display = "flex";
+  document.body.style.overflow = "hidden";
+}
+
+function closeOverrideModal() {
+  const modal = document.getElementById("override-modal");
+  if (modal) {
+    modal.style.display = "none";
+    document.body.style.overflow = "";
+  }
+}
+
+async function saveOverride() {
+  const checkedBoxes = document.querySelectorAll("input[name='replace_lesson']:checked");
+  const replaces_ids = Array.from(checkedBoxes).map(cb => parseInt(cb.value));
+
+  const target_date = document.getElementById("ov-date").value.trim();
+  const lesson_number = parseInt(document.getElementById("ov-lesson-num").value);
+  const subjectSelect = document.getElementById("ov-subject");
+  const subject = subjectSelect ? subjectSelect.value.trim() : "";
+  const title_note = document.getElementById("ov-note").value.trim();
+  let rawRoom = document.getElementById("ov-room").value.trim();
+  const teacher = document.getElementById("ov-teacher").value.trim();
+  const target_subgroup = parseInt(document.getElementById("ov-subgroup").value);
+
+  if (target_date.length < 10 || !subject) {
+    alert("Будь ласка, вкажіть коректну дату (дд.мм.рррр) та оберіть назву дисципліни!");
+    return;
+  }
+
+  let formattedRoom = "";
+  if (rawRoom) {
+    rawRoom = rawRoom.replace(/^(ауд\.?|ауд)\s*/i, "").replace(/\.?ауд\.?$/i, "").trim();
+    formattedRoom = `${rawRoom}.ауд.`;
+  }
+
+  try {
+    await apiRequest("/api/schedule/override/create", "POST", {
+      title_note,
+      replaces_ids,
+      target_date,
+      lesson_number,
+      subject,
+      lesson_type: "Лаб",
+      teacher,
+      room: formattedRoom,
+      target_subgroup
+    });
+
+    closeOverrideModal();
+    await loadSchedule();
+    if (tg && tg.showPopup) {
+      tg.showPopup({ message: "Пріоритетну пару збережено!" });
+    }
+  } catch (e) {
+    alert("Помилка: " + e.message);
+  }
+}
+
+async function deleteOverrideItem(overrideId) {
+  if (!confirm("Скасувати цю змінену пару та повернути розклад з деканату?")) return;
+  try {
+    await apiRequest(`/api/schedule/override/delete?override_id=${overrideId}`, "POST");
+    await loadSchedule();
+  } catch (e) {
+    alert("Помилка: " + e.message);
   }
 }
 
@@ -302,7 +717,6 @@ async function loadActiveReminders() {
       return;
     }
 
-    // Автоматично прибираємо всі дедлайни, час яких сплив
     const nowTimestamp = Date.now();
     const reminders = rawReminders.filter(r => {
       if (!r.deadline_at) return true;
@@ -655,7 +1069,6 @@ async function loadMyStats() {
   }
 }
 
-// Журнал відвідуваності на пару з дефолтним "Пропуск" та блокуванням скролу фону
 async function openAttendanceModal(scheduleId, subjectName) {
   currentActiveLessonId = scheduleId;
   attendanceState = {};
@@ -743,8 +1156,10 @@ async function downloadAttendanceReport() {
     a.download = `Журнал_КІ-25-1_${new Date().toLocaleDateString('uk-UA')}.csv`;
     document.body.appendChild(a);
     a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    setTimeout(() => {
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    }, 500);
   } catch (e) {
     alert("Не вдалося завантажити файл: " + e.message);
   }
@@ -808,11 +1223,15 @@ function openProfileModal() {
     if (sgSelect) sgSelect.value = currentUser.subgroup || 1;
   }
   modal.style.display = "flex";
+  document.body.style.overflow = "hidden";
 }
 
 function closeProfileModal() {
   const modal = document.getElementById("profile-modal");
-  if (modal) modal.style.display = "none";
+  if (modal) {
+    modal.style.display = "none";
+    document.body.style.overflow = "";
+  }
 }
 
 async function saveProfile() {

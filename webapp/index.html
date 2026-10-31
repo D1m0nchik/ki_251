@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>КІ-25-1 | Розклад та Журнал</title>
-  <link rel="stylesheet" href="style.css">
+  <!-- ?v=2 примусово оновлює закешовані стилі у Telegram WebApp -->
+  <link rel="stylesheet" href="style.css?v=2">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -26,14 +27,17 @@
       <section id="tab-schedule" class="tab-pane active">
         <div id="active-deadline-banner" style="display: none; margin-bottom: 16px;"></div>
 
+        <!-- Кнопка дедлайну -->
         <button id="starosta-create-deadline-btn" onclick="openReminderModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #ff4757, #ff6b81); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 700; margin-bottom: 10px; cursor: pointer;">
           ⏰ Додати дедлайн / завдання
         </button>
 
+        <!-- Кнопка об'єднання / зміни пари -->
         <button id="starosta-override-btn" onclick="openOverrideModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #f39c12, #f1c40f); color: #171822; border: none; padding: 12px; border-radius: 12px; font-weight: 800; margin-bottom: 14px; cursor: pointer;">
           🔄 Об'єднати / замінити пару
         </button>
 
+        <!-- Блок вибору періоду -->
         <div class="card filter-card">
           <h4>Отримати розклад за період:</h4>
           <div class="date-inputs">
@@ -251,6 +255,7 @@
     </div>
   </div>
 
+  <!-- Модальне вікно об'єднання / перенесення пар -->
   <div id="override-modal" class="modal" style="display: none;">
     <div class="modal-content" style="max-height: 90vh;">
       <h3>🔄 Об'єднання / Перенесення пар</h3>
@@ -303,6 +308,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

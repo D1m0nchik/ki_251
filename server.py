@@ -8,15 +8,15 @@ import re
 import asyncio
 from urllib.parse import parse_qsl
 from pathlib import Path
-from typing import Dict, Optional
-from datetime import datetime, timezone
+from typing import Dict, Optional, List
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Header, HTTPException, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 
 from database import get_db_pool
 from bot import bot
@@ -25,7 +25,6 @@ from parser import fetch_and_save_schedule
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 STAROSTA_TELEGRAM_ID = int(os.environ.get("STAROSTA_TELEGRAM_ID", 0))
 
-# Часовий пояс України
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 app = FastAPI()
@@ -36,7 +35,18 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"]
 )
+
+LESSON_TIMES = {
+    1: ("08:00", "09:20"),
+    2: ("09:30", "10:50"),
+    3: ("11:00", "12:20"),
+    4: ("12:50", "14:10"),
+    5: ("14:20", "15:40"),
+    6: ("15:50", "17:10"),
+    7: ("17:20", "18:40")
+}
 
 def verify_telegram_data(init_data: str) -> dict:
     if not init_data or init_data.strip() == "":
@@ -81,10 +91,8 @@ def get_reminder_keyboard(reminder_id: int):
     ])
 
 def parse_to_utc(dt_str: str) -> datetime:
-    """Приймає рядок з форми і перетворює його з Київського часу в UTC для бази даних"""
     clean_str = dt_str.replace("Z", "")
     dt_naive = datetime.fromisoformat(clean_str)
-    # Якщо таймзона не була передана з фронту — вважаємо, що це час по Києву
     if dt_naive.tzinfo is None:
         dt_kyiv = dt_naive.replace(tzinfo=KYIV_TZ)
     else:
@@ -135,10 +143,83 @@ async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str =
 
 SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str, 1, 10), 'DD.MM.YYYY')"
 
+@app.get("/api/schedule/meta")
+async def get_schedule_meta():
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        subj_rows = await conn.fetch("""
+            SELECT DISTINCT subject FROM schedule 
+            WHERE subject IS NOT NULL AND TRIM(subject) != ''
+            ORDER BY subject ASC
+        """)
+        teach_rows = await conn.fetch("""
+            SELECT DISTINCT teacher FROM schedule 
+            WHERE teacher IS NOT NULL AND TRIM(teacher) != ''
+            ORDER BY teacher ASC
+        """)
+        return {
+            "subjects": [r["subject"].strip() for r in subj_rows],
+            "teachers": [r["teacher"].strip() for r in teach_rows]
+        }
+
+class CreateOverrideRequest(BaseModel):
+    title_note: Optional[str] = "Об'єднана пара"
+    replaces_ids: List[int]
+    target_date: str
+    lesson_number: int
+    subject: str
+    lesson_type: Optional[str] = "Лаб"
+    teacher: Optional[str] = ""
+    room: Optional[str] = ""
+    target_subgroup: int = 0
+
+@app.post("/api/schedule/override/create")
+async def create_schedule_override(data: CreateOverrideRequest, x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        try:
+            day_dt = datetime.strptime(data.target_date[:10], "%d.%m.%Y")
+            days_ua = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
+            day_name = days_ua[day_dt.weekday()]
+        except Exception:
+            day_name = ""
+
+        t_start, t_end = LESSON_TIMES.get(data.lesson_number, ("08:00", "09:20"))
+
+        await conn.execute("""
+            INSERT INTO schedule_overrides (
+                title_note, replaces_schedule_ids, date_str, day_of_week,
+                lesson_number, time_start, time_end, subject, lesson_type,
+                teacher, room, target_subgroup
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        """, data.title_note.strip(), data.replaces_ids, data.target_date[:10],
+             day_name, data.lesson_number, t_start, t_end, data.subject.strip(),
+             data.lesson_type, data.teacher.strip(), data.room.strip(), data.target_subgroup)
+
+    return {"status": "ok"}
+
+@app.post("/api/schedule/override/delete")
+async def delete_schedule_override(override_id: int = Query(...), x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        await conn.execute("DELETE FROM schedule_overrides WHERE id = $1", override_id)
+    return {"status": "ok"}
+
 @app.get("/api/schedule")
 async def get_schedule(
     sdate: Optional[str] = Query(None),
     edate: Optional[str] = Query(None),
+    original: bool = Query(False),
     x_telegram_init_data: str = Header(...)
 ):
     user = verify_telegram_data(x_telegram_init_data)
@@ -150,11 +231,9 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
 
-        # 1. Якщо користувач обрав період через фільтр вручну
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
-            
             if role == "starosta":
                 query = f"""
                     SELECT * FROM schedule 
@@ -162,7 +241,7 @@ async def get_schedule(
                       AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
-                rows = await conn.fetch(query, s_clean, e_clean)
+                base_rows = await conn.fetch(query, s_clean, e_clean)
             else:
                 query = f"""
                     SELECT * FROM schedule 
@@ -171,30 +250,64 @@ async def get_schedule(
                       AND {SQL_DATE_CONVERT} <= TO_DATE($3, 'DD.MM.YYYY')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
-                rows = await conn.fetch(query, subgroup, s_clean, e_clean)
-            return [dict(r) for r in rows]
+                base_rows = await conn.fetch(query, subgroup, s_clean, e_clean)
 
-        # 2. Дефолтний режим: від СЬОГОДНІ до КІНЦЯ ТИЖНЯ (неділі)
-        # Визначаємо київський час прямо в SQL (ідеально синхронізовано з базою)
-        if role == "starosta":
-            query = f"""
-                SELECT * FROM schedule 
+            if original:
+                return [dict(r) for r in base_rows]
+
+            overrides = await conn.fetch(f"""
+                SELECT * FROM schedule_overrides
+                WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
+                  AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
+            """, s_clean, e_clean)
+        else:
+            if role == "starosta":
+                query = f"""
+                    SELECT * FROM schedule 
+                    WHERE {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                      AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + ((7 - EXTRACT(ISODOW FROM (NOW() AT TIME ZONE 'Europe/Kyiv')))::int))
+                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                """
+                base_rows = await conn.fetch(query)
+            else:
+                query = f"""
+                    SELECT * FROM schedule 
+                    WHERE target_subgroup IN (0, $1)
+                      AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                      AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + ((7 - EXTRACT(ISODOW FROM (NOW() AT TIME ZONE 'Europe/Kyiv')))::int))
+                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                """
+                base_rows = await conn.fetch(query, subgroup)
+
+            if original:
+                return [dict(r) for r in base_rows]
+
+            overrides = await conn.fetch(f"""
+                SELECT * FROM schedule_overrides
                 WHERE {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
                   AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + ((7 - EXTRACT(ISODOW FROM (NOW() AT TIME ZONE 'Europe/Kyiv')))::int))
-                ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
-            """
-            rows = await conn.fetch(query)
-        else:
-            query = f"""
-                SELECT * FROM schedule 
-                WHERE target_subgroup IN (0, $1)
-                  AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                  AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + ((7 - EXTRACT(ISODOW FROM (NOW() AT TIME ZONE 'Europe/Kyiv')))::int))
-                ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
-            """
-            rows = await conn.fetch(query, subgroup)
+            """)
 
-        return [dict(r) for r in rows]
+        replaced_ids = set()
+        active_overrides = []
+        for ov in overrides:
+            ov_dict = dict(ov)
+            if role != "starosta" and ov_dict["target_subgroup"] != 0 and ov_dict["target_subgroup"] != subgroup:
+                continue
+            if ov_dict.get("replaces_schedule_ids"):
+                replaced_ids.update(ov_dict["replaces_schedule_ids"])
+            ov_dict["is_custom_override"] = True
+            active_overrides.append(ov_dict)
+
+        final_lessons = [dict(r) for r in base_rows if r["id"] not in replaced_ids]
+        final_lessons.extend(active_overrides)
+
+        final_lessons.sort(key=lambda x: (
+            datetime.strptime(x["date_str"][:10], "%d.%m.%Y"),
+            x["lesson_number"]
+        ))
+
+        return final_lessons
 
 class DateRangeRequest(BaseModel):
     sdate: str
@@ -247,7 +360,6 @@ async def get_active_reminders(x_telegram_init_data: str = Header(...)):
         result = []
         for r in rows:
             d = dict(r)
-            # Перетворюємо дедлайн в ISO-формат з таймзоною UTC
             if d.get("deadline_at"):
                 d["deadline_at"] = d["deadline_at"].isoformat()
             result.append(d)
@@ -274,7 +386,6 @@ async def create_reminder(data: ReminderCreateRequest, x_telegram_init_data: str
 
         students = await conn.fetch("SELECT telegram_id FROM users")
 
-    # Відображення для повідомлення в боті по Києву
     deadline_kyiv_str = deadline_utc.astimezone(KYIV_TZ).strftime('%d.%m.%Y %H:%M')
     desc_block = f"{data.description.strip()}\n\n" if data.description.strip() else ""
     text = (
@@ -328,7 +439,6 @@ async def delete_reminder(reminder_id: int = Query(...), x_telegram_init_data: s
     return {"status": "ok"}
 
 async def background_reminder_notifier():
-    """Фоновий таск перевірки щохвилини для точного спрацьовування"""
     while True:
         try:
             await asyncio.sleep(60)
@@ -337,7 +447,6 @@ async def background_reminder_notifier():
                 continue
 
             async with pool.acquire() as conn:
-                # 1. Завдання, дедлайн яких минув
                 expired_reminders = await conn.fetch("""
                     SELECT id, title, description, deadline_at
                     FROM reminders
@@ -363,7 +472,6 @@ async def background_reminder_notifier():
                         WHERE rc.id IS NULL
                     """, rem_id)
 
-                    # Сповіщення боржникам
                     expired_msg_student = (
                         f"🛑 <b>ТЕРМІН ЗДАЧІ ВИЧЕРПАНО!</b>\n\n"
                         f"📌 Завдання: <b>{r['title']}</b>\n"
@@ -381,7 +489,6 @@ async def background_reminder_notifier():
                         except Exception:
                             pass
 
-                    # Звіт старості
                     if STAROSTA_TELEGRAM_ID:
                         debtors_list_str = "\n".join([f"• {d['full_name']}" for d in debtors]) or "— Немає (всі здали)"
                         completed_list_str = "\n".join([f"• {c['full_name']}" for c in completed_students]) or "— Ніхто не здав"
@@ -404,7 +511,6 @@ async def background_reminder_notifier():
 
                     await conn.execute("UPDATE reminders SET is_active = FALSE WHERE id = $1", rem_id)
 
-                # 2. Періодичні нагадування (менше 24 год, не частіше ніж раз на 6 год)
                 active_reminders = await conn.fetch("""
                     SELECT id, title, description, deadline_at
                     FROM reminders
@@ -489,9 +595,7 @@ async def get_students_for_lesson(schedule_id: int, x_telegram_init_data: str = 
             raise HTTPException(status_code=403, detail="Доступ заборонено")
 
         lesson = await conn.fetchrow("SELECT target_subgroup FROM schedule WHERE id = $1", schedule_id)
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Пару не знайдено")
-        target_sg = lesson["target_subgroup"]
+        target_sg = lesson["target_subgroup"] if lesson else 0
 
         query = """
             SELECT u.telegram_id, u.full_name, u.subgroup, COALESCE(a.status, 'absent') as status
@@ -524,6 +628,235 @@ async def save_attendance(data: AttendanceSaveRequest, x_telegram_init_data: str
                     ON CONFLICT(schedule_id, telegram_id) DO UPDATE SET status = EXCLUDED.status
                 """, data.schedule_id, int(tg_id), status)
     return {"status": "ok"}
+
+# ==============================================================
+# КАЛЕНДАРНИЙ ЖУРНАЛ, ШАХМАТКА ТА ВІДПРАВКА В TELEGRAM
+# ==============================================================
+
+@app.get("/api/attendance/calendar_meta")
+async def get_attendance_calendar_meta(
+    year: int = Query(...),
+    month: int = Query(...),
+    x_telegram_init_data: str = Header(...)
+):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        rows = await conn.fetch(f"""
+            SELECT DISTINCT EXTRACT(DAY FROM {SQL_DATE_CONVERT})::int as day_num
+            FROM attendance a
+            JOIN schedule s ON s.id = a.schedule_id
+            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+        """, month, year)
+
+        marked_days = [r["day_num"] for r in rows if r["day_num"] is not None]
+        return {"year": year, "month": month, "marked_days": marked_days}
+
+@app.get("/api/attendance/day_matrix")
+async def get_day_matrix(date_str: str = Query(...), x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        clean_date = date_str[:10]
+
+        students = await conn.fetch("SELECT telegram_id, full_name, subgroup FROM users ORDER BY full_name ASC")
+
+        lessons = await conn.fetch("""
+            SELECT id, lesson_number, time_start, time_end, subject, lesson_type, room, target_subgroup
+            FROM schedule
+            WHERE SUBSTRING(date_str, 1, 10) = $1
+            ORDER BY lesson_number ASC, target_subgroup ASC
+        """, clean_date)
+
+        att_rows = await conn.fetch("""
+            SELECT a.schedule_id, a.telegram_id, a.status
+            FROM attendance a
+            JOIN schedule s ON s.id = a.schedule_id
+            WHERE SUBSTRING(s.date_str, 1, 10) = $1
+        """, clean_date)
+
+        att_map = {}
+        for r in att_rows:
+            key = f"{r['schedule_id']}_{r['telegram_id']}"
+            att_map[key] = r["status"]
+
+        return {
+            "date_str": clean_date,
+            "students": [dict(s) for s in students],
+            "lessons": [dict(l) for l in lessons],
+            "matrix": att_map
+        }
+
+class CellToggleRequest(BaseModel):
+    schedule_id: int
+    telegram_id: int
+
+@app.post("/api/attendance/cell_toggle")
+async def toggle_cell_attendance(data: CellToggleRequest, x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        curr = await conn.fetchval("""
+            SELECT status FROM attendance WHERE schedule_id = $1 AND telegram_id = $2
+        """, data.schedule_id, data.telegram_id)
+
+        next_status_map = {
+            "present": "absent",
+            "absent": "late",
+            "late": "excused",
+            "excused": "present",
+            None: "present"
+        }
+        new_status = next_status_map.get(curr, "present")
+
+        await conn.execute("""
+            INSERT INTO attendance (schedule_id, telegram_id, status)
+            VALUES ($1, $2, $3)
+            ON CONFLICT(schedule_id, telegram_id) DO UPDATE SET status = EXCLUDED.status
+        """, data.schedule_id, data.telegram_id, new_status)
+
+        return {"status": "ok", "new_status": new_status}
+
+def build_matrix_csv(students, lessons, att_dict) -> bytes:
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.writer(output, delimiter=';')
+
+    header = ["№", "ПІБ Студента", "Підгр."]
+    for l in lessons:
+        header.append(f"{l['date_str'][:5]} ({l['lesson_number']}п)")
+    writer.writerow(header)
+
+    status_chars = {
+        "present": "✓",
+        "absent": "Н",
+        "late": "З",
+        "excused": "П"
+    }
+
+    for idx, st in enumerate(students, start=1):
+        row = [idx, st["full_name"], f"{st['subgroup']} підгр."]
+        for l in lessons:
+            st_key = f"{l['id']}_{st['telegram_id']}"
+            val = att_dict.get(st_key, "")
+            row.append(status_chars.get(val, ""))
+        writer.writerow(row)
+
+    return output.getvalue().encode('utf-8-sig')
+
+@app.post("/api/attendance/send_to_telegram")
+async def send_attendance_matrix_to_telegram(
+    month: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
+    x_telegram_init_data: str = Header(...)
+):
+    """Генерує файл відомості і надсилає його старості документом в Telegram-чат."""
+    user = verify_telegram_data(x_telegram_init_data)
+    tg_id = int(user.get("id"))
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", tg_id)
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        now = datetime.now()
+        target_year = year or now.year
+        target_month = month or now.month
+
+        students = await conn.fetch("SELECT telegram_id, full_name, subgroup FROM users ORDER BY full_name ASC")
+
+        lessons = await conn.fetch(f"""
+            SELECT id, date_str, lesson_number, subject
+            FROM schedule
+            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+            ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+        """, target_month, target_year)
+
+        att_records = await conn.fetch(f"""
+            SELECT a.schedule_id, a.telegram_id, a.status
+            FROM attendance a
+            JOIN schedule s ON s.id = a.schedule_id
+            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+        """, target_month, target_year)
+
+        att_dict = {f"{r['schedule_id']}_{r['telegram_id']}": r["status"] for r in att_records}
+
+    csv_bytes = build_matrix_csv(students, lessons, att_dict)
+    filename = f"Відомість_КІ-25-1_{target_month:02d}_{target_year}.csv"
+
+    doc = BufferedInputFile(csv_bytes, filename=filename)
+    await bot.send_document(
+        chat_id=tg_id,
+        document=doc,
+        caption=f"📋 <b>Відомість відвідуваності групи КІ-25-1</b>\n📅 Період: <b>{target_month:02d}.{target_year}</b>",
+        parse_mode="HTML"
+    )
+
+    return {"status": "ok", "filename": filename}
+
+@app.get("/api/attendance/export_matrix")
+async def export_attendance_matrix_report(
+    month: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
+    x_telegram_init_data: str = Header(...)
+):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        now = datetime.now()
+        target_year = year or now.year
+        target_month = month or now.month
+
+        students = await conn.fetch("SELECT telegram_id, full_name, subgroup FROM users ORDER BY full_name ASC")
+
+        lessons = await conn.fetch(f"""
+            SELECT id, date_str, lesson_number, subject
+            FROM schedule
+            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+            ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+        """, target_month, target_year)
+
+        att_records = await conn.fetch(f"""
+            SELECT a.schedule_id, a.telegram_id, a.status
+            FROM attendance a
+            JOIN schedule s ON s.id = a.schedule_id
+            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+        """, target_month, target_year)
+
+        att_dict = {f"{r['schedule_id']}_{r['telegram_id']}": r["status"] for r in att_records}
+
+    csv_bytes = build_matrix_csv(students, lessons, att_dict)
+    filename = f"journal_KI251_{target_month:02d}_{target_year}.csv"
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
 
 @app.get("/api/my_stats")
 async def get_my_stats(x_telegram_init_data: str = Header(...)):
@@ -644,7 +977,8 @@ async def export_attendance_file(x_telegram_init_data: str = Header(...)):
         content=csv_data,
         media_type="text/csv",
         headers={
-            "Content-Disposition": "attachment; filename=attendance_report_KI251.csv"
+            "Content-Disposition": "attachment; filename=attendance_report_KI251.csv",
+            "Access-Control-Expose-Headers": "Content-Disposition"
         }
     )
 

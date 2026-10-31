@@ -322,7 +322,12 @@ function renderSchedule(lessonsList) {
         sgTag = `<span style="font-size: 11px; background: rgba(243, 156, 18, 0.2); color: #f39c12; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">2 підгр.</span>`;
       }
 
-      // Обробка дистанційного заняття та посилання Google Meet
+      // Позначка вибіркової дисципліни
+      let electiveTag = "";
+      if (item.elective_num && item.elective_num > 0) {
+        electiveTag = `<span style="font-size: 11px; background: rgba(253, 121, 168, 0.18); color: #fd79a8; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">⭐ Вибіркова ${item.elective_num}</span>`;
+      }
+
       const meetUrl = (item.meet_url || "").trim();
       const isOnline = meetUrl.length > 0 || 
                        (item.room && item.room.toLowerCase().includes("дистанційн")) ||
@@ -354,7 +359,7 @@ function renderSchedule(lessonsList) {
         ${onlineBadge}
         ${replacementHtml}
         <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h4 style="margin:0 0 6px 0;">${item.lesson_number} пара (${item.time_start} - ${item.time_end}) ${sgTag}</h4>
+          <h4 style="margin:0 0 6px 0;">${item.lesson_number} пара (${item.time_start} - ${item.time_end}) ${sgTag} ${electiveTag}</h4>
           <div style="display:flex; gap:6px; align-items:center;">
             ${deleteOverrideBtn}
             ${starostaBtn}
@@ -522,9 +527,10 @@ function renderDayMatrixTable(data) {
 
   lessons.forEach(l => {
     const shortSubj = l.subject.length > 15 ? l.subject.substring(0, 13) + '..' : l.subject;
+    const elMark = l.elective_num ? ` ⭐${l.elective_num}` : '';
     html += `
       <th>
-        <div style="font-size: 11px; color:#a29bfe;">${l.lesson_number} пара</div>
+        <div style="font-size: 11px; color:#a29bfe;">${l.lesson_number} пара${elMark}</div>
         <div style="font-size: 12px; margin: 2px 0;">${shortSubj}</div>
         <div style="font-size: 10px; color:#8e8ea0;">${l.time_start}</div>
       </th>
@@ -552,7 +558,9 @@ function renderDayMatrixTable(data) {
 
     lessons.forEach(l => {
       const isOtherSubgroup = (l.target_subgroup !== 0 && l.target_subgroup !== st.subgroup);
-      if (isOtherSubgroup) {
+      const isOtherElective = (l.elective_num !== 0 && st.elective_group !== 0 && l.elective_num !== st.elective_group);
+
+      if (isOtherSubgroup || isOtherElective) {
         html += `<td><span style="color:#4a4b60;">—</span></td>`;
         return;
       }
@@ -626,10 +634,11 @@ async function openOverrideModal() {
     const item = document.createElement("label");
     const roomInfo = l.room ? ` | 🏛 ${l.room}` : "";
     const sgInfo = l.target_subgroup === 0 ? "Всі" : `${l.target_subgroup} підгр.`;
+    const elInfo = l.elective_num ? ` [Вибір ${l.elective_num}]` : "";
 
     item.innerHTML = `
       <input type="checkbox" name="replace_lesson" value="${l.id}">
-      <span><b>${l.date_str}</b> (${l.lesson_number} пара): ${l.subject} [${sgInfo}]${roomInfo}</span>
+      <span><b>${l.date_str}</b> (${l.lesson_number} пара): ${l.subject} [${sgInfo}]${elInfo}${roomInfo}</span>
     `;
     listContainer.appendChild(item);
   });
@@ -693,6 +702,7 @@ async function saveOverride() {
   const teacher = document.getElementById("ov-teacher").value.trim();
   const meet_url = document.getElementById("ov-meet") ? document.getElementById("ov-meet").value.trim() : "";
   const target_subgroup = parseInt(document.getElementById("ov-subgroup").value);
+  const elective_num = parseInt(document.getElementById("ov-elective").value);
 
   if (target_date.length < 10 || !subject) {
     alert("Будь ласка, вкажіть коректну дату (дд.мм.рррр) та оберіть назву дисципліни!");
@@ -720,6 +730,7 @@ async function saveOverride() {
       teacher,
       room: formattedRoom,
       meet_url,
+      elective_num,
       target_subgroup
     });
 
@@ -905,18 +916,37 @@ async function loadGroupManagement() {
 
     students.forEach(s => {
       const card = document.createElement("div");
-      card.style.cssText = "background: #161722; border: 1px solid #232435; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;";
+      card.style.cssText = "background: #161722; border: 1px solid #232435; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px;";
+
+      const electiveVal = s.elective_group || 0;
 
       card.innerHTML = `
-        <div style="display: flex; flex-direction: column; gap: 4px;">
-          <strong style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px;">${s.full_name}</strong>
-          <span style="font-size: 12px; color: #8e8ea0;">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</span>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <strong style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px;">${s.full_name}</strong>
+            <span style="font-size: 12px; color: #8e8ea0;">${s.role === 'starosta' ? '👑 Староста' : 'Студент'}</span>
+          </div>
         </div>
-        <div>
-          <select onchange="changeSubgroup(${s.telegram_id}, this.value)" style="background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
-            <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
-            <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
-          </select>
+
+        <div style="display: flex; gap: 8px;">
+          <!-- Селектор підгрупи -->
+          <div style="flex: 1;">
+            <label style="font-size: 11px; color: #8e8ea0; display: block; margin-bottom: 4px;">Підгрупа:</label>
+            <select onchange="changeSubgroup(${s.telegram_id}, this.value)" style="width: 100%; background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+              <option value="1" ${s.subgroup === 1 ? 'selected' : ''}>1 підгрупа</option>
+              <option value="2" ${s.subgroup === 2 ? 'selected' : ''}>2 підгрупа</option>
+            </select>
+          </div>
+
+          <!-- Селектор вибіркової дисципліни (тільки для старости) -->
+          <div style="flex: 1;">
+            <label style="font-size: 11px; color: #8e8ea0; display: block; margin-bottom: 4px;">Вибіркова:</label>
+            <select onchange="changeElective(${s.telegram_id}, this.value)" style="width: 100%; background: #202130; border: 1px solid #2f3045; color: #ffffff; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+              <option value="0" ${electiveVal === 0 ? 'selected' : ''}>Не обрано (обидві)</option>
+              <option value="1" ${electiveVal === 1 ? 'selected' : ''}>⭐ Вибіркова №1</option>
+              <option value="2" ${electiveVal === 2 ? 'selected' : ''}>⭐ Вибіркова №2</option>
+            </select>
+          </div>
         </div>
       `;
       container.appendChild(card);
@@ -930,6 +960,13 @@ async function changeSubgroup(tgId, newSg) {
   await apiRequest("/api/group/change_subgroup", "POST", {
     student_tg_id: tgId,
     subgroup: parseInt(newSg)
+  });
+}
+
+async function changeElective(tgId, newEl) {
+  await apiRequest("/api/group/change_elective", "POST", {
+    student_tg_id: tgId,
+    elective_group: parseInt(newEl)
   });
 }
 

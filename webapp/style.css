@@ -10,6 +10,7 @@
   --primary-hover: #5b4bc4;
   --danger: #ff4757;
   --success: #2ecc71;
+  --warning: #f1c40f;
 }
 
 * {
@@ -39,7 +40,6 @@ body {
   padding: 16px 16px 85px 16px;
 }
 
-/* Верхній бар */
 .app-header {
   display: flex;
   justify-content: space-between;
@@ -75,7 +75,6 @@ body {
   cursor: pointer;
 }
 
-/* Вкладки */
 .tab-pane {
   display: none;
   width: 100%;
@@ -85,7 +84,6 @@ body {
   display: block;
 }
 
-/* Картки */
 .card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
@@ -94,7 +92,6 @@ body {
   margin-bottom: 12px;
 }
 
-/* ТЕМНІ ІНПУТИ ТА СЕЛЕКТИ */
 input[type="text"],
 input[type="datetime-local"],
 textarea,
@@ -121,7 +118,6 @@ textarea {
   resize: vertical;
 }
 
-/* Блок вибору дат розкладу */
 .filter-card h4 {
   margin-bottom: 10px;
   font-size: 14px;
@@ -141,7 +137,6 @@ textarea {
   text-align: center;
 }
 
-/* Кнопки */
 .btn-primary {
   background: var(--primary);
   color: #fff;
@@ -150,11 +145,6 @@ textarea {
   padding: 10px 14px;
   font-weight: 700;
   cursor: pointer;
-  transition: background 0.2s;
-}
-
-.btn-primary:active {
-  background: var(--primary-hover);
 }
 
 .btn-secondary {
@@ -195,7 +185,6 @@ textarea {
   white-space: nowrap;
 }
 
-/* Перемикач підгруп */
 .subgroup-switcher {
   display: flex;
   background: #171822;
@@ -223,7 +212,6 @@ textarea {
   color: #fff;
 }
 
-/* Картки занять */
 .day-header {
   font-size: 16px;
   font-weight: 800;
@@ -231,9 +219,26 @@ textarea {
   margin: 16px 0 8px 0;
 }
 
-.lesson-card {
+.card.lesson-card {
   margin-bottom: 10px;
-  border-left: 3px solid var(--primary);
+  border-left: 4px solid var(--primary);
+}
+
+.card.lesson-card.custom-override {
+  border-left: 4px solid #f1c40f !important;
+  background: linear-gradient(135deg, rgba(241, 196, 15, 0.09), rgba(243, 156, 18, 0.02));
+}
+
+.override-badge {
+  background: rgba(241, 196, 15, 0.15);
+  border: 1px solid rgba(241, 196, 15, 0.4);
+  color: #f1c40f;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-block;
+  margin-bottom: 6px;
 }
 
 .btn-journal {
@@ -247,7 +252,184 @@ textarea {
   cursor: pointer;
 }
 
-/* МОДАЛЬНІ ВІКНА */
+/* =========================================================
+   СТИЛІ КАЛЕНДАРЯ МІСЯЦЯ ТА ШАХМАТКИ ЖУРНАЛУ
+   ========================================================= */
+
+.btn-cal-nav {
+  background: #202130;
+  border: 1px solid #2f3045;
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.calendar-grid-header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #8e8ea0;
+  margin-bottom: 8px;
+}
+
+.calendar-days-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.cal-day-cell {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #171822;
+  border: 1px solid #232435;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.cal-day-cell.empty {
+  background: transparent;
+  border: none;
+  cursor: default;
+}
+
+.cal-day-cell.active-day {
+  background: #242638;
+  border-color: #3b3d58;
+}
+
+.cal-day-cell.today {
+  border-color: var(--primary);
+  color: #a29bfe;
+}
+
+.cal-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #a29bfe;
+  margin-top: 3px;
+}
+
+/* Шахматка дня */
+.matrix-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid #232435;
+}
+
+.matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 400px;
+  font-size: 13px;
+}
+
+.matrix-table th {
+  background: #191b28;
+  color: #ffffff;
+  padding: 10px 8px;
+  border-bottom: 1px solid #282a3d;
+  font-weight: 700;
+  text-align: center;
+}
+
+.matrix-table th.st-col {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: #191b28;
+  z-index: 2;
+  min-width: 130px;
+}
+
+.matrix-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid #202233;
+  text-align: center;
+}
+
+.matrix-table td.st-col {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: #161722;
+  z-index: 1;
+  font-weight: 600;
+  border-right: 1px solid #232435;
+}
+
+/* Клітинки відміток */
+.matrix-cell-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.matrix-cell-btn:active {
+  transform: scale(0.9);
+}
+
+.cell-pres {
+  background: rgba(46, 204, 113, 0.18);
+  color: #2ecc71;
+  border: 1px solid rgba(46, 204, 113, 0.4);
+}
+
+.cell-abs {
+  background: rgba(255, 71, 87, 0.18);
+  color: #ff4757;
+  border: 1px solid rgba(255, 71, 87, 0.4);
+}
+
+.cell-late {
+  background: rgba(243, 156, 18, 0.18);
+  color: #f39c12;
+  border: 1px solid rgba(243, 156, 18, 0.4);
+}
+
+.cell-exc {
+  background: rgba(52, 152, 219, 0.18);
+  color: #3498db;
+  border: 1px solid rgba(52, 152, 219, 0.4);
+}
+
+.cell-none {
+  background: #202130;
+  color: #8e8ea0;
+  border: 1px solid #2f3045;
+}
+
+.legend-badge {
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Модальні вікна */
 .modal {
   position: fixed;
   inset: 0;
@@ -268,8 +450,8 @@ textarea {
   border-radius: 16px;
   padding: 20px;
   width: 100%;
-  max-width: 400px;
-  max-height: 85vh;
+  max-width: 420px;
+  max-height: 88vh;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
@@ -309,7 +491,49 @@ textarea {
   padding: 10px;
 }
 
-/* Окремий скрол для списку студентів у журналі */
+#override-source-lessons-list {
+  max-height: 140px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #202130;
+  border: 1px solid #2f3045;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+#override-source-lessons-list label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: #fff;
+  cursor: pointer;
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+#override-source-lessons-list input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: #f1c40f;
+}
+
+#override-source-lessons-list span {
+  flex: 1;
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.35;
+}
+
 #modal-students-list {
   max-height: 55vh;
   overflow-y: auto;
@@ -319,20 +543,22 @@ textarea {
   margin-bottom: 8px;
 }
 
-#modal-students-list::-webkit-scrollbar {
+#modal-students-list::-webkit-scrollbar,
+#override-source-lessons-list::-webkit-scrollbar {
   width: 5px;
 }
 
-#modal-students-list::-webkit-scrollbar-track {
+#modal-students-list::-webkit-scrollbar-track,
+#override-source-lessons-list::-webkit-scrollbar-track {
   background: #171822;
 }
 
-#modal-students-list::-webkit-scrollbar-thumb {
+#modal-students-list::-webkit-scrollbar-thumb,
+#override-source-lessons-list::-webkit-scrollbar-thumb {
   background: #2f3045;
   border-radius: 4px;
 }
 
-/* Нижнє меню */
 .bottom-nav {
   position: fixed;
   bottom: 0;
@@ -381,7 +607,6 @@ textarea {
   padding: 30px 0;
 }
 
-/* СТИЛІ ВКЛАДКИ «УСПІШНІСТЬ» */
 .stats-summary-card {
   display: flex;
   align-items: center;

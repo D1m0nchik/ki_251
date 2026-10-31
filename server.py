@@ -112,10 +112,10 @@ async def get_user_data(x_telegram_init_data: str = Header(...)):
 
         if not row:
             await conn.execute(
-                "INSERT INTO users (telegram_id, full_name, subgroup, role) VALUES ($1, $2, 1, $3)",
+                "INSERT INTO users (telegram_id, full_name, subgroup, role, elective_group) VALUES ($1, $2, 1, $3, 0)",
                 tg_id, name, role
             )
-            return {"telegram_id": tg_id, "full_name": name, "subgroup": 1, "role": role}
+            return {"telegram_id": tg_id, "full_name": name, "subgroup": 1, "role": role, "elective_group": 0}
 
         if tg_id == STAROSTA_TELEGRAM_ID and row["role"] != "starosta":
             await conn.execute("UPDATE users SET role = 'starosta' WHERE telegram_id = $1", tg_id)
@@ -172,6 +172,7 @@ class CreateOverrideRequest(BaseModel):
     teacher: Optional[str] = ""
     room: Optional[str] = ""
     meet_url: Optional[str] = ""
+    elective_num: Optional[int] = 0
     target_subgroup: int = 0
 
 @app.post("/api/schedule/override/create")
@@ -196,12 +197,12 @@ async def create_schedule_override(data: CreateOverrideRequest, x_telegram_init_
             INSERT INTO schedule_overrides (
                 title_note, replaces_schedule_ids, date_str, day_of_week,
                 lesson_number, time_start, time_end, subject, lesson_type,
-                teacher, room, target_subgroup, meet_url
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                teacher, room, target_subgroup, meet_url, elective_num
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         """, data.title_note.strip(), data.replaces_ids, data.target_date[:10],
              day_name, data.lesson_number, t_start, t_end, data.subject.strip(),
              data.lesson_type, data.teacher.strip(), data.room.strip(), data.target_subgroup,
-             data.meet_url.strip())
+             data.meet_url.strip(), data.elective_num)
 
     return {"status": "ok"}
 
@@ -229,10 +230,12 @@ async def get_schedule(
     
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        user_row = await conn.fetchrow("SELECT role, subgroup FROM users WHERE telegram_id = $1", tg_id)
+        user_row = await conn.fetchrow("SELECT role, subgroup, COALESCE(elective_group, 0) as elective_group FROM users WHERE telegram_id = $1", tg_id)
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
+        user_elective = user_row["elective_group"] if user_row else 0
 
+        # Фільтр за діапазоном дат
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -248,11 +251,12 @@ async def get_schedule(
                 query = f"""
                     SELECT * FROM schedule 
                     WHERE target_subgroup IN (0, $1)
-                      AND {SQL_DATE_CONVERT} >= TO_DATE($2, 'DD.MM.YYYY')
-                      AND {SQL_DATE_CONVERT} <= TO_DATE($3, 'DD.MM.YYYY')
+                      AND (elective_num = 0 OR $2 = 0 OR elective_num = $2)
+                      AND {SQL_DATE_CONVERT} >= TO_DATE($3, 'DD.MM.YYYY')
+                      AND {SQL_DATE_CONVERT} <= TO_DATE($4, 'DD.MM.YYYY')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
-                base_rows = await conn.fetch(query, subgroup, s_clean, e_clean)
+                base_rows = await conn.fetch(query, subgroup, user_elective, s_clean, e_clean)
 
             if original:
                 return [dict(r) for r in base_rows]
@@ -263,6 +267,7 @@ async def get_schedule(
                   AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
             """, s_clean, e_clean)
         else:
+            # Ковзне вікно на 7 днів уперед від сьогодні
             if role == "starosta":
                 query = f"""
                     SELECT * FROM schedule 
@@ -275,11 +280,12 @@ async def get_schedule(
                 query = f"""
                     SELECT * FROM schedule 
                     WHERE target_subgroup IN (0, $1)
+                      AND (elective_num = 0 OR $2 = 0 OR elective_num = $2)
                       AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
                       AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
-                base_rows = await conn.fetch(query, subgroup)
+                base_rows = await conn.fetch(query, subgroup, user_elective)
 
             if original:
                 return [dict(r) for r in base_rows]
@@ -294,8 +300,13 @@ async def get_schedule(
         active_overrides = []
         for ov in overrides:
             ov_dict = dict(ov)
-            if role != "starosta" and ov_dict["target_subgroup"] != 0 and ov_dict["target_subgroup"] != subgroup:
-                continue
+            if role != "starosta":
+                if ov_dict["target_subgroup"] != 0 and ov_dict["target_subgroup"] != subgroup:
+                    continue
+                ov_el = ov_dict.get("elective_num", 0)
+                if ov_el and user_elective and ov_el != user_elective:
+                    continue
+
             if ov_dict.get("replaces_schedule_ids"):
                 replaced_ids.update(ov_dict["replaces_schedule_ids"])
             ov_dict["is_custom_override"] = True
@@ -571,7 +582,11 @@ async def get_all_group_students(x_telegram_init_data: str = Header(...)):
         if not u or u["role"] != "starosta":
             raise HTTPException(status_code=403, detail="Доступ заборонено")
 
-        rows = await conn.fetch("SELECT telegram_id, full_name, subgroup, role FROM users ORDER BY full_name ASC")
+        rows = await conn.fetch("""
+            SELECT telegram_id, full_name, subgroup, role, COALESCE(elective_group, 0) as elective_group 
+            FROM users 
+            ORDER BY full_name ASC
+        """)
         return [dict(r) for r in rows]
 
 class ChangeSubgroupRequest(BaseModel):
@@ -590,6 +605,22 @@ async def change_student_subgroup(data: ChangeSubgroupRequest, x_telegram_init_d
         await conn.execute("UPDATE users SET subgroup = $1 WHERE telegram_id = $2", data.subgroup, data.student_tg_id)
     return {"status": "ok"}
 
+class ChangeElectiveRequest(BaseModel):
+    student_tg_id: int
+    elective_group: int
+
+@app.post("/api/group/change_elective")
+async def change_student_elective(data: ChangeElectiveRequest, x_telegram_init_data: str = Header(...)):
+    user = verify_telegram_data(x_telegram_init_data)
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
+        if not u or u["role"] != "starosta":
+            raise HTTPException(status_code=403, detail="Доступ заборонено")
+
+        await conn.execute("UPDATE users SET elective_group = $1 WHERE telegram_id = $2", data.elective_group, data.student_tg_id)
+    return {"status": "ok"}
+
 @app.get("/api/attendance/students")
 async def get_students_for_lesson(schedule_id: int, x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)
@@ -599,17 +630,19 @@ async def get_students_for_lesson(schedule_id: int, x_telegram_init_data: str = 
         if not u or u["role"] != "starosta":
             raise HTTPException(status_code=403, detail="Доступ заборонено")
 
-        lesson = await conn.fetchrow("SELECT target_subgroup FROM schedule WHERE id = $1", schedule_id)
+        lesson = await conn.fetchrow("SELECT target_subgroup, COALESCE(elective_num, 0) as elective_num FROM schedule WHERE id = $1", schedule_id)
         target_sg = lesson["target_subgroup"] if lesson else 0
+        el_num = lesson["elective_num"] if lesson else 0
 
         query = """
             SELECT u.telegram_id, u.full_name, u.subgroup, COALESCE(a.status, 'absent') as status
             FROM users u
             LEFT JOIN attendance a ON a.telegram_id = u.telegram_id AND a.schedule_id = $1
             WHERE ($2 = 0 OR u.subgroup = $3)
+              AND ($4 = 0 OR COALESCE(u.elective_group, 0) = 0 OR u.elective_group = $4)
             ORDER BY u.full_name ASC
         """
-        rows = await conn.fetch(query, schedule_id, target_sg, target_sg)
+        rows = await conn.fetch(query, schedule_id, target_sg, target_sg, el_num)
         return [dict(r) for r in rows]
 
 class AttendanceSaveRequest(BaseModel):
@@ -669,10 +702,10 @@ async def get_day_matrix(date_str: str = Query(...), x_telegram_init_data: str =
 
         clean_date = date_str[:10]
 
-        students = await conn.fetch("SELECT telegram_id, full_name, subgroup FROM users ORDER BY full_name ASC")
+        students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch("""
-            SELECT id, lesson_number, time_start, time_end, subject, lesson_type, room, target_subgroup, meet_url
+            SELECT id, lesson_number, time_start, time_end, subject, lesson_type, room, target_subgroup, meet_url, COALESCE(elective_num, 0) as elective_num
             FROM schedule
             WHERE SUBSTRING(date_str, 1, 10) = $1
             ORDER BY lesson_number ASC, target_subgroup ASC
@@ -736,7 +769,7 @@ def build_matrix_csv(students, lessons, att_dict) -> bytes:
     output.write('\ufeff')
     writer = csv.writer(output, delimiter=';')
 
-    header = ["№", "ПІБ Студента", "Підгр."]
+    header = ["№", "ПІБ Студента", "Підгр.", "Вибіркова"]
     for l in lessons:
         header.append(f"{l['date_str'][:5]} ({l['lesson_number']}п)")
     writer.writerow(header)
@@ -749,7 +782,8 @@ def build_matrix_csv(students, lessons, att_dict) -> bytes:
     }
 
     for idx, st in enumerate(students, start=1):
-        row = [idx, st["full_name"], f"{st['subgroup']} підгр."]
+        el_label = "Не обрано" if st["elective_group"] == 0 else f"Вибір {st['elective_group']}"
+        row = [idx, st["full_name"], f"{st['subgroup']} підгр.", el_label]
         for l in lessons:
             st_key = f"{l['id']}_{st['telegram_id']}"
             val = att_dict.get(st_key, "")
@@ -777,7 +811,7 @@ async def send_attendance_matrix_to_telegram(
         target_year = year or now.year
         target_month = month or now.month
 
-        students = await conn.fetch("SELECT telegram_id, full_name, subgroup FROM users ORDER BY full_name ASC")
+        students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch(f"""
             SELECT id, date_str, lesson_number, subject
@@ -827,7 +861,7 @@ async def export_attendance_matrix_report(
         target_year = year or now.year
         target_month = month or now.month
 
-        students = await conn.fetch("SELECT telegram_id, full_name, subgroup FROM users ORDER BY full_name ASC")
+        students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch(f"""
             SELECT id, date_str, lesson_number, subject

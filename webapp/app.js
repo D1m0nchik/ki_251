@@ -313,17 +313,15 @@ function renderSchedule(lessonsList) {
         ? `<button class="btn-journal" onclick="openAttendanceModal(${item.id}, '${item.subject.replace(/'/g, "\\'")}')">📝 Журнал</button>`
         : "";
 
-      // Акуратний бейдж підгрупи
+      // ТІЛЬКИ якщо пара для 1 або 2 підгрупи — показуємо плашку. Якщо для обох (0) — плашка НЕ показується взагалі!
       let sgTag = "";
-      if (item.target_subgroup === 0) {
-        sgTag = `<span class="tag-sg-both">Обидві підгр.</span>`;
-      } else if (item.target_subgroup === 1) {
-        sgTag = `<span class="tag-sg-1">1 підгрупа</span>`;
+      if (item.target_subgroup === 1) {
+        sgTag = `<span class="tag-sg-1">1 підгр.</span>`;
       } else if (item.target_subgroup === 2) {
-        sgTag = `<span class="tag-sg-2">2 підгрупа</span>`;
+        sgTag = `<span class="tag-sg-2">2 підгр.</span>`;
       }
 
-      // Акуратний бейдж вибіркової дисципліни
+      // Плашка вибіркової
       let electiveTag = "";
       if (item.elective_num && item.elective_num > 0) {
         electiveTag = `<span class="tag-elective">★ Вибіркова ${item.elective_num}</span>`;
@@ -360,19 +358,17 @@ function renderSchedule(lessonsList) {
         ${onlineBadge}
         ${replacementHtml}
         
-        <!-- Верхній рядок: час пари та кнопка журналу старости -->
-        <div class="lesson-top-row">
-          <h4 class="lesson-time-title">${item.lesson_number} пара (${item.time_start} - ${item.time_end})</h4>
+        <!-- Верхній рядок: номер, час та плашки в одному рядку -->
+        <div class="lesson-header-line">
+          <div class="lesson-title-badges">
+            <h4>${item.lesson_number} пара (${item.time_start} - ${item.time_end})</h4>
+            ${sgTag}
+            ${electiveTag}
+          </div>
           <div style="display:flex; gap:6px; align-items:center;">
             ${deleteOverrideBtn}
             ${starostaBtn}
           </div>
-        </div>
-
-        <!-- Окремий рядок для бейджів (підгрупа + вибіркова), щоб текст ніколи не злипався -->
-        <div class="lesson-badges-wrap">
-          ${sgTag}
-          ${electiveTag}
         </div>
 
         <!-- Назва предмета та викладач -->

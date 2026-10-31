@@ -6,7 +6,7 @@ from datetime import datetime
 from database import get_db_pool
 
 SCHEDULE_URL = "https://pk.nung.edu.ua/schedule"
-GROUP_NAME = "КІм-26-1"
+GROUP_NAME = "КІ-25-1"
 
 def extract_meet_url(cell_element) -> str:
     """Витягує посилання на онлайн-пару (Meet/Zoom/Teams) з HTML елемента комірки."""

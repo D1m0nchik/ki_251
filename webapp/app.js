@@ -359,6 +359,7 @@ function switchJournalSubTab(subTab) {
     statsView.style.display = "none";
     if (btnCal) btnCal.classList.add("active");
     if (btnStats) btnStats.classList.remove("active");
+    loadCalendarMonth(calCurrentYear, calCurrentMonth);
   } else {
     calView.style.display = "none";
     statsView.style.display = "block";
@@ -382,7 +383,7 @@ async function loadCalendarMonth(year, month) {
 
   try {
     const meta = await apiRequest(`/api/attendance/calendar_meta?year=${year}&month=${month}`);
-    calMarkedDays = meta.marked_days || [];
+    calMarkedDays = (meta && meta.marked_days) ? meta.marked_days : [];
   } catch (err) {
     calMarkedDays = [];
   }

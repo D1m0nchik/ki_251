@@ -231,7 +231,6 @@ async def get_schedule(
         role = user_row["role"] if user_row else "student"
         subgroup = user_row["subgroup"] if user_row else 1
 
-        # 1. Пошук за конкретний діапазон дат
         if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
@@ -261,8 +260,6 @@ async def get_schedule(
                 WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
                   AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
             """, s_clean, e_clean)
-
-        # 2. Дефолтний режим: КОВЗНЕ ВІКНО на 7 днів вперед від СЬОГОДНІ
         else:
             if role == "starosta":
                 query = f"""
@@ -291,7 +288,6 @@ async def get_schedule(
                   AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
             """)
 
-        # Фільтрація та заміна пар
         replaced_ids = set()
         active_overrides = []
         for ov in overrides:

@@ -171,6 +171,7 @@ class CreateOverrideRequest(BaseModel):
     lesson_type: Optional[str] = "Лаб"
     teacher: Optional[str] = ""
     room: Optional[str] = ""
+    meet_url: Optional[str] = ""
     target_subgroup: int = 0
 
 @app.post("/api/schedule/override/create")
@@ -195,11 +196,12 @@ async def create_schedule_override(data: CreateOverrideRequest, x_telegram_init_
             INSERT INTO schedule_overrides (
                 title_note, replaces_schedule_ids, date_str, day_of_week,
                 lesson_number, time_start, time_end, subject, lesson_type,
-                teacher, room, target_subgroup
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                teacher, room, target_subgroup, meet_url
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         """, data.title_note.strip(), data.replaces_ids, data.target_date[:10],
              day_name, data.lesson_number, t_start, t_end, data.subject.strip(),
-             data.lesson_type, data.teacher.strip(), data.room.strip(), data.target_subgroup)
+             data.lesson_type, data.teacher.strip(), data.room.strip(), data.target_subgroup,
+             data.meet_url.strip())
 
     return {"status": "ok"}
 
@@ -632,10 +634,6 @@ async def save_attendance(data: AttendanceSaveRequest, x_telegram_init_data: str
                 """, data.schedule_id, int(tg_id), status)
     return {"status": "ok"}
 
-# ==============================================================
-# КАЛЕНДАРНИЙ ЖУРНАЛ, ШАХМАТКА ТА ВІДПРАВКА В TELEGRAM
-# ==============================================================
-
 @app.get("/api/attendance/calendar_meta")
 async def get_attendance_calendar_meta(
     year: int = Query(...),
@@ -674,7 +672,7 @@ async def get_day_matrix(date_str: str = Query(...), x_telegram_init_data: str =
         students = await conn.fetch("SELECT telegram_id, full_name, subgroup FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch("""
-            SELECT id, lesson_number, time_start, time_end, subject, lesson_type, room, target_subgroup
+            SELECT id, lesson_number, time_start, time_end, subject, lesson_type, room, target_subgroup, meet_url
             FROM schedule
             WHERE SUBSTRING(date_str, 1, 10) = $1
             ORDER BY lesson_number ASC, target_subgroup ASC

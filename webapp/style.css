@@ -252,10 +252,41 @@ textarea {
   cursor: pointer;
 }
 
-/* =========================================================
-   СТИЛІ КАЛЕНДАРЯ МІСЯЦЯ ТА ШАХМАТКИ ЖУРНАЛУ
-   ========================================================= */
+/* Дистанційне посилання та бейдж */
+.online-badge {
+  background: rgba(75, 207, 250, 0.15);
+  border: 1px solid rgba(75, 207, 250, 0.35);
+  color: #4bcffa;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+}
 
+.btn-meet-join {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 12px;
+  background: linear-gradient(135deg, #1a73e8, #1557b0);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+/* Календар місяця та шахматка */
 .btn-cal-nav {
   background: #202130 !important;
   border: 1px solid #2f3045 !important;
@@ -326,7 +357,6 @@ textarea {
   margin-top: 3px;
 }
 
-/* Шахматка дня */
 .matrix-table-wrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -431,7 +461,10 @@ textarea {
   font-weight: 700;
 }
 
-/* Модальні вікна */
+/* =========================================================
+   ВИПРАВЛЕННЯ МОДАЛЬНИХ ВІКОН ТА СПИСКУ ПАР
+   ========================================================= */
+
 .modal {
   position: fixed;
   inset: 0;
@@ -442,7 +475,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 16px;
   box-sizing: border-box;
 }
 
@@ -450,22 +483,24 @@ textarea {
   background: #171822;
   border: 1px solid #28293d;
   border-radius: 16px;
-  padding: 20px;
+  padding: 18px 16px;
   width: 100%;
   max-width: 420px;
-  max-height: 88vh;
+  max-height: 90vh;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  overflow: hidden;
+  gap: 10px;
+  overflow-y: auto; /* Дозволяє плавно скролити модалку на невеликих екранах */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .modal-content h3 {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 800;
   color: #ffffff;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   flex-shrink: 0;
 }
 
@@ -473,18 +508,20 @@ textarea {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
-  margin-bottom: -6px;
+  margin-bottom: -4px;
+  flex-shrink: 0;
 }
 
 .modal-content input,
 .modal-content select {
   width: 100%;
+  flex-shrink: 0;
 }
 
 .modal-actions {
   display: flex;
   gap: 10px;
-  margin-top: auto;
+  margin-top: 6px;
   flex-shrink: 0;
 }
 
@@ -493,17 +530,21 @@ textarea {
   padding: 10px;
 }
 
+/* Блок списку пар для заміни: фіксована висота + flex-shrink: 0 */
 #override-source-lessons-list {
+  min-height: 120px;
+  height: 135px;
   max-height: 140px;
+  flex-shrink: 0 !important; /* ЗАХИСТ: flexbox більше не стискає блок */
   overflow-y: auto;
   overflow-x: hidden;
   background: #202130;
   border: 1px solid #2f3045;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 6px 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   box-sizing: border-box;
   width: 100%;
 }
@@ -512,18 +553,26 @@ textarea {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  font-size: 13px;
-  color: #fff;
+  font-size: 12px;
+  color: #ffffff;
   cursor: pointer;
   margin: 0;
   width: 100%;
   box-sizing: border-box;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+#override-source-lessons-list label:active {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 #override-source-lessons-list input[type="checkbox"] {
   width: 16px;
   height: 16px;
-  margin-top: 2px;
+  margin-top: 1px;
   flex-shrink: 0;
   cursor: pointer;
   accent-color: #f1c40f;
@@ -533,7 +582,7 @@ textarea {
   flex: 1;
   word-break: break-word;
   white-space: normal;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 #modal-students-list {
@@ -546,17 +595,20 @@ textarea {
 }
 
 #modal-students-list::-webkit-scrollbar,
-#override-source-lessons-list::-webkit-scrollbar {
+#override-source-lessons-list::-webkit-scrollbar,
+.modal-content::-webkit-scrollbar {
   width: 5px;
 }
 
 #modal-students-list::-webkit-scrollbar-track,
-#override-source-lessons-list::-webkit-scrollbar-track {
+#override-source-lessons-list::-webkit-scrollbar-track,
+.modal-content::-webkit-scrollbar-track {
   background: #171822;
 }
 
 #modal-students-list::-webkit-scrollbar-thumb,
-#override-source-lessons-list::-webkit-scrollbar-thumb {
+#override-source-lessons-list::-webkit-scrollbar-thumb,
+.modal-content::-webkit-scrollbar-thumb {
   background: #2f3045;
   border-radius: 4px;
 }

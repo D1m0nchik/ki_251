@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>КІ-25-1 | Розклад та Журнал</title>
-  <!-- ?v=2 примусово оновлює закешовані стилі у Telegram WebApp -->
-  <link rel="stylesheet" href="style.css?v=2">
+  <!-- ?v=3 для скидання кешу вбудованого браузера Telegram -->
+  <link rel="stylesheet" href="style.css?v=3">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -27,7 +27,7 @@
       <section id="tab-schedule" class="tab-pane active">
         <div id="active-deadline-banner" style="display: none; margin-bottom: 16px;"></div>
 
-        <!-- Кнопка дедлайну -->
+        <!-- Кнопка створення дедлайну -->
         <button id="starosta-create-deadline-btn" onclick="openReminderModal()" style="display: none; width: 100%; background: linear-gradient(135deg, #ff4757, #ff6b81); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 700; margin-bottom: 10px; cursor: pointer;">
           ⏰ Додати дедлайн / завдання
         </button>
@@ -261,6 +261,7 @@
       <h3>🔄 Об'єднання / Перенесення пар</h3>
       <label>1. Оберіть пари з розкладу, які замінюються:</label>
       <div id="override-source-lessons-list"></div>
+      
       <label>2. Куди переносимо / коли проводимо:</label>
       <div style="display: flex; gap: 8px;">
         <input type="text" id="ov-date" placeholder="дд.мм.рррр" maxlength="10" oninput="maskDateInput(this)" style="flex: 2;">
@@ -272,24 +273,32 @@
           <option value="5">5 пара</option>
         </select>
       </div>
+
       <label>3. Дисципліна та примітка:</label>
       <select id="ov-subject" style="width: 100%; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; margin-bottom: 6px;">
         <option value="">-- Оберіть дисципліну зі списку --</option>
       </select>
       <input type="text" id="ov-note" placeholder="Примітка" value="Об'єднана пара куратора">
+
       <label>4. Аудиторія та викладач:</label>
       <div style="display: flex; gap: 8px;">
-        <input type="text" id="ov-room" placeholder="Номер (напр. 1.215)" style="flex: 1;">
+        <input type="text" id="ov-room" placeholder="Номер (напр. 1.215 або Дистанційно)" style="flex: 1;">
         <select id="ov-teacher" style="flex: 2; text-overflow: ellipsis; white-space: nowrap; overflow: hidden;">
           <option value="">-- Оберіть викладача --</option>
         </select>
       </div>
-      <label>5. Для кого ця пара:</label>
+
+      <!-- Поле для посилання Google Meet -->
+      <label>5. Посилання на онлайн-зустріч (Google Meet / Zoom):</label>
+      <input type="text" id="ov-meet" placeholder="https://meet.google.com/xyz-abcd-efg">
+
+      <label>6. Для кого ця пара:</label>
       <select id="ov-subgroup">
         <option value="0">👥 Обидві підгрупи (1 та 2 разом)</option>
         <option value="1">1 підгрупа</option>
         <option value="2">2 підгрупа</option>
       </select>
+
       <div class="modal-actions">
         <button class="btn-secondary" onclick="closeOverrideModal()">Скасувати</button>
         <button class="btn-primary" style="background: #f1c40f; color: #171822;" onclick="saveOverride()">Застосувати заміну</button>
@@ -308,6 +317,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

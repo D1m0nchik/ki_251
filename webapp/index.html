@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>КІ-25-1 | Розклад та Журнал</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -68,14 +68,14 @@
         </div>
       </section>
 
-      <!-- 2. Вкладка Склад групи (для старости: підгрупи + вибіркові) -->
+      <!-- 2. Вкладка Склад групи (для старости) -->
       <section id="tab-group" class="tab-pane">
         <h2 style="font-size: 24px; font-weight: 800; margin: 0 0 6px 0; color: #fff;">Склад групи КІ-25-1</h2>
         <p style="font-size: 13px; color: #8e8ea0; margin: 0 0 16px 0;">Розподіл по підгрупах та вибіркових предметах</p>
         <div id="group-students-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
       </section>
 
-      <!-- 3. Вкладка Журнал (Календар + Шахматка + Аналітика) -->
+      <!-- 3. Вкладка Журнал -->
       <section id="tab-group-stats" class="tab-pane">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <div class="subgroup-switcher" style="margin: 0; flex: 1; max-width: 240px;">
@@ -249,8 +249,9 @@
     </div>
   </div>
 
+  <!-- Модальне вікно об'єднання / перенесення пар -->
   <div id="override-modal" class="modal" style="display: none;">
-    <div class="modal-content" style="max-height: 90vh;">
+    <div class="modal-content">
       <h3>🔄 Об'єднання / Перенесення пар</h3>
       <label>1. Оберіть пари з розкладу, які замінюються:</label>
       <div id="override-source-lessons-list"></div>
@@ -316,6 +317,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

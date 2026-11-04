@@ -68,6 +68,25 @@ async function apiRequest(endpoint, method = "GET", body = null) {
 async function init() {
   try {
     currentUser = await apiRequest("/api/user_data");
+  } catch (err) {
+    console.error("Init error:", err);
+    const appContainer = document.querySelector(".app-container");
+    if (appContainer) {
+      appContainer.innerHTML = `
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; text-align: center; padding: 20px;">
+          <div style="font-size: 54px; margin-bottom: 16px;">⛔</div>
+          <h2 style="color: #ff4757; margin-bottom: 10px; font-size: 20px;">Доступ обмежено</h2>
+          <p style="color: #8e8ea0; font-size: 14px; line-height: 1.5; max-width: 320px;">
+            Вас немає в списку студентів групи <b>КІ-25-1</b>.<br><br>
+            Зверніться до старости для отримання доступу.
+          </p>
+        </div>
+      `;
+    }
+    return;
+  }
+
+  try {
     const isStarosta = currentUser && currentUser.role === "starosta";
 
     const badge = document.getElementById("user-role-badge");
@@ -111,7 +130,7 @@ async function init() {
       openProfileModal();
     }
   } catch (err) {
-    console.error("Init error:", err);
+    console.error("Setup error:", err);
   }
 
   await refreshAllData();
@@ -654,7 +673,6 @@ function closePollDetailsModal() {
   document.body.style.overflow = "";
 }
 
-// Календар та Шахматка
 function switchJournalSubTab(subTab) {
   const calView = document.getElementById("journal-view-calendar");
   const statsView = document.getElementById("journal-view-stats");

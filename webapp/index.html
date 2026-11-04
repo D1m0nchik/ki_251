@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>КІ-25-1 | Розклад та Журнал</title>
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -333,12 +333,31 @@
         <span>Дозволити вибір кількох варіантів</span>
       </label>
 
+      <!-- Чекбокс для дозволу варіанту "Інше" -->
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+        <input type="checkbox" id="poll-allow-custom" style="width: 16px; height: 16px;">
+        <span>Дозволити свій варіант ("Інше")</span>
+      </label>
+
       <label>Дедлайн завершення (необов'язково):</label>
       <input type="datetime-local" id="poll-deadline">
 
       <div class="modal-actions">
         <button class="btn-secondary" onclick="closeCreatePollModal()">Скасувати</button>
         <button class="btn-primary" style="background: #0984e3;" onclick="submitNewPoll()">Запустити та сповістити</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальне вікно вводу власного варіанту ("Інше") -->
+  <div id="poll-custom-vote-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h3>✍️ Запропонувати свій варіант</h3>
+      <label>Введіть ваш варіант відповіді:</label>
+      <textarea id="poll-custom-input-text" placeholder="Напишіть вашу пропозицію або коментар..." style="height: 80px;"></textarea>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeCustomVoteModal()">Скасувати</button>
+        <button class="btn-primary" style="background: #0984e3;" onclick="submitCustomVote()">Проголосувати</button>
       </div>
     </div>
   </div>
@@ -365,6 +384,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

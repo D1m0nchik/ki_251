@@ -430,7 +430,6 @@ async function loadPolls() {
         `;
       });
 
-      // Рендер кнопки "Інше" (якщо дозволено)
       if (poll.allow_custom) {
         const hasCustomVote = poll.my_votes && poll.my_votes.includes(999);
         const customCheckIcon = hasCustomVote ? "✅ " : "✍️ ";
@@ -622,7 +621,6 @@ async function openPollDetails(pollId) {
       body.appendChild(block);
     });
 
-    // Варіанти "Інше" зі своїми текстами
     const customVotes = (poll.voters_details || []).filter(v => v.option_id === 999);
     if (customVotes.length > 0) {
       const cList = customVotes.map(cv => `• <b>${cv.full_name}</b>: «${cv.custom_text || 'Без тексту'}»`).join("<br>");

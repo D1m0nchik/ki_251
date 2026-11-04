@@ -9,6 +9,7 @@ from database import get_db_pool
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "https://ki-251.onrender.com/app")
+STAROSTA_TELEGRAM_ID = int(os.environ.get("STAROSTA_TELEGRAM_ID", 0))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -29,20 +30,106 @@ async def cmd_start(message: types.Message):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         user = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
-        if not user:
+        
+        # Якщо це староста і його ще немає в базі — реєструємо автоматично
+        if not user and tg_id == STAROSTA_TELEGRAM_ID:
             await conn.execute("""
                 INSERT INTO users (telegram_id, full_name, subgroup, role, elective_group)
-                VALUES ($1, $2, 1, 'student', 0)
-                ON CONFLICT (telegram_id) DO NOTHING
+                VALUES ($1, $2, 1, 'starosta', 0)
+                ON CONFLICT (telegram_id) DO UPDATE SET role = 'starosta'
             """, tg_id, full_name)
+            user = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
+
+        # ⛔ Перевірка білого списку: якщо користувача немає в базі — блокуємо доступ
+        if not user:
+            await message.answer(
+                f"⛔ <b>Доступ обмежено!</b>\n\n"
+                f"Вас немає в списку студентів групи <b>КІ-25-1</b>.\n"
+                f"Ваш Telegram ID: <code>{tg_id}</code>\n\n"
+                f"<i>Скопіюйте цей ID та надішліть старості, щоб він додав вас до бази.</i>",
+                parse_mode="HTML"
+            )
+            return
 
     await message.answer(
-        f"Привіт, <b>{full_name}</b>!\n\n"
-        f"Це бот групи <b>КІ-25-1</b>.\n"
-        f"Тут ти можеш переглядати розклад занять, відмічати виконані завдання, голосувати в опитуваннях та отримувати сповіщення.",
+        f"Привіт, <b>{user['full_name']}</b>!\n\n"
+        f"Ти успішно авторизований у системі групи <b>КІ-25-1</b>.\n"
+        f"Тут можна переглядати актуальний розклад, слідкувати за дедлайнами, проходити опитування та перевіряти відвідуваність.",
         parse_mode="HTML",
         reply_markup=get_start_keyboard()
     )
+
+# Команда для старости: швидке додавання студента до білого списку
+@dp.message(Command("add_student"))
+async def cmd_add_student(message: types.Message):
+    if message.from_user.id != STAROSTA_TELEGRAM_ID:
+        return
+
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 4:
+        await message.answer(
+            "ℹ️ <b>Формат додавання студента:</b>\n"
+            "<code>/add_student ТГ_АЙДІ Прізвище_Ім'я Підгрупа</code>\n\n"
+            "Приклад:\n"
+            "<code>/add_student 123456789 Іванов Іван 1</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    try:
+        new_tg_id = int(parts[1])
+        full_name = parts[2]
+        subgroup = int(parts[3])
+    except ValueError:
+        await message.answer("❌ Помилка: Telegram ID та підгрупа (1 або 2) мають бути числами.")
+        return
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO users (telegram_id, full_name, subgroup, role, elective_group)
+            VALUES ($1, $2, $3, 'student', 0)
+            ON CONFLICT (telegram_id) DO UPDATE SET 
+                full_name = EXCLUDED.full_name,
+                subgroup = EXCLUDED.subgroup
+        """, new_tg_id, full_name, subgroup)
+
+    await message.answer(
+        f"✅ Студента <b>{full_name}</b> успішно внесено до білого списку!\n"
+        f"🆔 ID: <code>{new_tg_id}</code> | Підгрупа: <b>{subgroup}</b>\n\n"
+        f"Тепер студент може написати /start і користуватися ботом.",
+        parse_mode="HTML"
+    )
+
+# Команда для старости: видалення зі списку (блокування доступу)
+@dp.message(Command("remove_student"))
+async def cmd_remove_student(message: types.Message):
+    if message.from_user.id != STAROSTA_TELEGRAM_ID:
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("ℹ️ Формат: <code>/remove_student ТГ_АЙДІ</code>", parse_mode="HTML")
+        return
+
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID має бути числом.")
+        return
+
+    if target_id == STAROSTA_TELEGRAM_ID:
+        await message.answer("❌ Не можна видалити старосту.")
+        return
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        deleted = await conn.execute("DELETE FROM users WHERE telegram_id = $1", target_id)
+
+    if deleted == "DELETE 0":
+        await message.answer("Студента з таким ID не знайдено в базі.")
+    else:
+        await message.answer(f"🚫 Користувача <code>{target_id}</code> видалено з бази. Доступ заблоковано.", parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("done_reminder_"))
 async def handle_done_reminder_callback(callback: types.CallbackQuery):
@@ -112,7 +199,6 @@ async def process_custom_poll_text(message: types.Message, state: FSMContext):
         if not poll["is_multiple"]:
             await conn.execute("DELETE FROM poll_votes WHERE poll_id = $1 AND telegram_id = $2", poll_id, tg_id)
         
-        # option_id = 999 зарезервовано для "Інше"
         await conn.execute("""
             INSERT INTO poll_votes (poll_id, telegram_id, option_id, custom_text)
             VALUES ($1, $2, 999, $3)

@@ -150,8 +150,7 @@ async function refreshAllData(isBackground = false) {
   try {
     await loadSchedule(isBackground);
     loadActiveReminders().catch(e => console.error(e));
-    loadPolls().catch(e => console.error(e));
-    loadAnnouncements().catch(e => console.error(e));
+    loadCombinedFeed().catch(e => console.error(e));
     loadMyStats().catch(e => console.error(e));
     if (currentUser && currentUser.role === "starosta") {
       loadGroupStats().catch(e => console.error(e));
@@ -409,103 +408,171 @@ function renderSchedule(lessonsList) {
 }
 
 // =========================================================
-// ЖИВІ ОПИТУВАННЯ (LIVE POLLS) З ВАРІАНТОМ "ІНШЕ"
+// ЄДИНА ХРОНОЛОГІЧНА СТРІЧКА (АКТИВНІ ОПИТУВАННЯ ЗАКРІПЛЕНІ ВГОРІ)
 // =========================================================
 
-async function loadPolls() {
-  const container = document.getElementById("polls-list");
+async function loadCombinedFeed() {
+  const container = document.getElementById("feed-list");
   if (!container) return;
 
   try {
-    const polls = await apiRequest("/api/polls");
+    const [polls, announcements] = await Promise.all([
+      apiRequest("/api/polls").catch(() => []),
+      apiRequest("/api/announcements").catch(() => [])
+    ]);
+
     container.innerHTML = "";
 
-    if (!polls || polls.length === 0) return;
+    const activePolls = [];
+    const feedItems = [];
+
+    (polls || []).forEach(p => {
+      p._type = "poll";
+      p._timestamp = p.created_at_iso ? new Date(p.created_at_iso).getTime() : 0;
+      if (p.is_active) {
+        activePolls.push(p);
+      } else {
+        feedItems.push(p);
+      }
+    });
+
+    (announcements || []).forEach(a => {
+      a._type = "announcement";
+      a._timestamp = a.created_at_iso ? new Date(a.created_at_iso).getTime() : 0;
+      feedItems.push(a);
+    });
+
+    // Активні опитування сортуємо від найновіших
+    activePolls.sort((a, b) => b._timestamp - a._timestamp);
+
+    // Загальну стрічку (завершені опитування + оголошення) сортуємо суворо за часом
+    feedItems.sort((a, b) => b._timestamp - a._timestamp);
+
+    if (activePolls.length === 0 && feedItems.length === 0) {
+      container.innerHTML = "<p class='text-muted'>Поки немає жодних оголошень або опитувань.</p>";
+      return;
+    }
 
     const isStarosta = currentUser && currentUser.role === "starosta";
 
-    polls.forEach(poll => {
-      const card = document.createElement("div");
-      card.className = "poll-card";
-
-      const statusBadge = poll.is_active
-        ? `<span class="poll-status-badge poll-active">Активне</span>`
-        : `<span class="poll-status-badge poll-closed">Завершено</span>`;
-
-      let optionsHtml = "";
-      poll.options.forEach(opt => {
-        const isSelected = poll.my_votes && poll.my_votes.includes(opt.id);
-        const checkIcon = isSelected ? "✅ " : "🔘 ";
-        const clickHandler = poll.is_active ? `onclick="castVote(${poll.id}, ${opt.id})"` : "";
-
-        optionsHtml += `
-          <button class="poll-option-btn ${isSelected ? 'selected' : ''}" ${clickHandler}>
-            <div class="opt-fill" style="width: ${opt.percent}%;"></div>
-            <div class="opt-content">
-              <span>${checkIcon}${opt.text}</span>
-              <span style="font-weight: 700; color: #74b9ff;">${opt.percent}% (${opt.votes_count})</span>
-            </div>
-          </button>
-        `;
-      });
-
-      if (poll.allow_custom) {
-        const hasCustomVote = poll.my_votes && poll.my_votes.includes(999);
-        const customCheckIcon = hasCustomVote ? "✅ " : "✍️ ";
-        const customTextDisplay = poll.my_custom_vote ? `«${poll.my_custom_vote}»` : "Інше (свій варіант)";
-        const clickHandler = poll.is_active ? `onclick="openCustomVoteModal(${poll.id}, '${(poll.my_custom_vote || '').replace(/'/g, "\\'")}')"` : "";
-
-        optionsHtml += `
-          <button class="poll-option-btn ${hasCustomVote ? 'selected' : ''}" ${clickHandler} style="border-style: dashed;">
-            <div class="opt-fill" style="width: ${poll.custom_percent || 0}%;"></div>
-            <div class="opt-content">
-              <span>${customCheckIcon}${customTextDisplay}</span>
-              <span style="font-weight: 700; color: #a29bfe;">${poll.custom_percent || 0}% (${poll.custom_votes_count || 0})</span>
-            </div>
-          </button>
-        `;
-      }
-
-      let starostaControls = "";
-      if (isStarosta) {
-        const closeBtn = poll.is_active
-          ? `<button onclick="closePollItem(${poll.id})" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; color: #ff6b81; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">Завершити</button>`
-          : "";
-
-        starostaControls = `
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 8px; border-top: 1px solid #232435;">
-            <button onclick="openPollDetails(${poll.id})" style="background: none; border: none; color: #4bcffa; font-size: 12px; font-weight: 700; cursor: pointer;">👥 Хто як голосував</button>
-            ${closeBtn}
-          </div>
-        `;
-      }
-
-      card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <strong style="font-size: 15px; color: #fff; line-height: 1.3;">📊 ${poll.question}</strong>
-          ${statusBadge}
-        </div>
-        <div style="font-size: 11px; color: #8e8ea0;">
-          Голосів: <b>${poll.total_voters}</b> ${poll.is_multiple ? '· Кілька варіантів' : '· Один варіант'}
-          ${poll.allow_custom ? ' · Свій варіант дозволено' : ''}
-          ${poll.deadline_str ? ` · До: ${poll.deadline_str}` : ''}
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 6px;">
-          ${optionsHtml}
-        </div>
-        ${starostaControls}
-      `;
-      container.appendChild(card);
+    // 1. Спочатку рендеримо закріплені активні опитування
+    activePolls.forEach(poll => {
+      container.appendChild(renderPollCard(poll, isStarosta, true));
     });
+
+    // 2. Далі хронологічна стрічка (завершені опитування + оголошення)
+    feedItems.forEach(item => {
+      if (item._type === "poll") {
+        container.appendChild(renderPollCard(item, isStarosta, false));
+      } else {
+        container.appendChild(renderAnnouncementCard(item));
+      }
+    });
+
   } catch (err) {
-    console.error("Помилка завантаження опитувань:", err);
+    console.error("Помилка завантаження стрічки:", err);
+    container.innerHTML = "<p class='text-muted'>Не вдалося завантажити оновлення.</p>";
   }
+}
+
+function renderPollCard(poll, isStarosta, isPinned = false) {
+  const card = document.createElement("div");
+  card.className = "poll-card";
+
+  const statusBadge = poll.is_active
+    ? `<span class="poll-status-badge poll-active">Активне</span>`
+    : `<span class="poll-status-badge poll-closed">Завершено</span>`;
+
+  const pinnedBadge = isPinned
+    ? `<span style="font-size: 11px; color: #74b9ff; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;">📌 Закріплене опитування</span>`
+    : "";
+
+  let optionsHtml = "";
+  poll.options.forEach(opt => {
+    const isSelected = poll.my_votes && poll.my_votes.includes(opt.id);
+    const checkIcon = isSelected ? "✅ " : "🔘 ";
+    const clickHandler = poll.is_active ? `onclick="castVote(${poll.id}, ${opt.id})"` : "";
+
+    optionsHtml += `
+      <button class="poll-option-btn ${isSelected ? 'selected' : ''}" ${clickHandler}>
+        <div class="opt-fill" style="width: ${opt.percent}%;"></div>
+        <div class="opt-content">
+          <span>${checkIcon}${opt.text}</span>
+          <span style="font-weight: 700; color: #74b9ff;">${opt.percent}% (${opt.votes_count})</span>
+        </div>
+      </button>
+    `;
+  });
+
+  if (poll.allow_custom) {
+    const hasCustomVote = poll.my_votes && poll.my_votes.includes(999);
+    const customCheckIcon = hasCustomVote ? "✅ " : "✍️ ";
+    const customTextDisplay = poll.my_custom_vote ? `«${poll.my_custom_vote}»` : "Інше (свій варіант)";
+    const clickHandler = poll.is_active ? `onclick="openCustomVoteModal(${poll.id}, '${(poll.my_custom_vote || '').replace(/'/g, "\\'")}')"` : "";
+
+    optionsHtml += `
+      <button class="poll-option-btn ${hasCustomVote ? 'selected' : ''}" ${clickHandler} style="border-style: dashed;">
+        <div class="opt-fill" style="width: ${poll.custom_percent || 0}%;"></div>
+        <div class="opt-content">
+          <span>${customCheckIcon}${customTextDisplay}</span>
+          <span style="font-weight: 700; color: #a29bfe;">${poll.custom_percent || 0}% (${poll.custom_votes_count || 0})</span>
+        </div>
+      </button>
+    `;
+  }
+
+  let starostaControls = "";
+  if (isStarosta) {
+    const closeBtn = poll.is_active
+      ? `<button onclick="closePollItem(${poll.id})" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; color: #ff6b81; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">Завершити</button>`
+      : "";
+
+    starostaControls = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 8px; border-top: 1px solid #232435;">
+        <button onclick="openPollDetails(${poll.id})" style="background: none; border: none; color: #4bcffa; font-size: 12px; font-weight: 700; cursor: pointer;">👥 Хто як голосував</button>
+        ${closeBtn}
+      </div>
+    `;
+  }
+
+  card.innerHTML = `
+    ${pinnedBadge}
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+      <strong style="font-size: 15px; color: #fff; line-height: 1.3;">📊 ${poll.question}</strong>
+      ${statusBadge}
+    </div>
+    <div style="font-size: 11px; color: #8e8ea0; display: flex; justify-content: space-between; flex-wrap: wrap;">
+      <span>Голосів: <b>${poll.total_voters}</b> ${poll.is_multiple ? '· Кілька варіантів' : '· Один варіант'}</span>
+      <span>${poll.created_str || ''}</span>
+    </div>
+    ${poll.deadline_str ? `<div style="font-size: 11px; color: #ff6b81;">⏳ До: ${poll.deadline_str}</div>` : ''}
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      ${optionsHtml}
+    </div>
+    ${starostaControls}
+  `;
+  return card;
+}
+
+function renderAnnouncementCard(item) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const messageWithLinks = formatMessageWithLinks(item.message);
+
+  card.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 6px; gap: 8px;">
+      <h4 style="margin:0; color: #ff6b81; font-size: 15px;">📢 ${item.title}</h4>
+      <span style="font-size:11px; color:var(--text-muted); white-space: nowrap;">${item.date_time || ''}</span>
+    </div>
+    <p style="margin:0; font-size:14px; line-height:1.45; white-space: pre-wrap;">${messageWithLinks}</p>
+  `;
+  return card;
 }
 
 async function castVote(pollId, optionId) {
   try {
     await apiRequest("/api/polls/vote", "POST", { poll_id: pollId, option_id: optionId });
-    await loadPolls();
+    await loadCombinedFeed();
   } catch (err) {
     alert(err.message);
   }
@@ -538,7 +605,7 @@ async function submitCustomVote() {
       custom_text: text
     });
     closeCustomVoteModal();
-    await loadPolls();
+    await loadCombinedFeed();
     if (tg && tg.showPopup) tg.showPopup({ message: "Ваш варіант збережено!" });
   } catch (err) {
     alert(err.message);
@@ -549,7 +616,7 @@ async function closePollItem(pollId) {
   if (!confirm("Завершити це опитування та зафіксувати фінальні результати?")) return;
   try {
     await apiRequest(`/api/polls/close?poll_id=${pollId}`, "POST");
-    await loadPolls();
+    await loadCombinedFeed();
     if (tg && tg.showPopup) tg.showPopup({ message: "Опитування завершено! Результати надіслано в чат бота." });
   } catch (err) {
     alert(err.message);
@@ -603,7 +670,7 @@ async function submitNewPoll() {
     });
     closeCreatePollModal();
     document.getElementById("poll-question").value = "";
-    await loadPolls();
+    await loadCombinedFeed();
     if (tg && tg.showPopup) tg.showPopup({ message: "Опитування створено та надіслано всім студентам!" });
   } catch (err) {
     alert(err.message);
@@ -673,6 +740,23 @@ function closePollDetailsModal() {
   document.body.style.overflow = "";
 }
 
+async function sendBroadcastMessage() {
+  const title = document.getElementById("broadcast-title").value.trim();
+  const message = document.getElementById("broadcast-body").value.trim();
+  if (!title || !message) {
+    alert("Будь ласка, заповніть тему та текст");
+    return;
+  }
+
+  const res = await apiRequest("/api/broadcast", "POST", { title, message });
+  alert(`Оголошення надіслано ${res.sent_to} студентам та збережено!`);
+  
+  document.getElementById("broadcast-title").value = "";
+  document.getElementById("broadcast-body").value = "";
+  await loadCombinedFeed();
+}
+
+// Календар та Шахматка
 function switchJournalSubTab(subTab) {
   const calView = document.getElementById("journal-view-calendar");
   const statsView = document.getElementById("journal-view-stats");
@@ -1535,54 +1619,6 @@ async function downloadAttendanceReport() {
   } catch (e) {
     alert("Не вдалося завантажити файл: " + e.message);
   }
-}
-
-async function loadAnnouncements() {
-  const container = document.getElementById("announcements-list");
-  if (!container) return;
-
-  try {
-    const list = await apiRequest("/api/announcements");
-    container.innerHTML = "";
-
-    if (!list || list.length === 0) {
-      container.innerHTML = "<p class='text-muted'>Поки немає жодних оголошень.</p>";
-      return;
-    }
-
-    list.forEach(item => {
-      const card = document.createElement("div");
-      card.className = "card";
-      const messageWithLinks = formatMessageWithLinks(item.message);
-
-      card.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 6px;">
-          <h4 style="margin:0; color: #ff6b81;">📢 ${item.title}</h4>
-          <span style="font-size:11px; color:var(--text-muted);">${item.date_time || ''}</span>
-        </div>
-        <p style="margin:0; font-size:14px; line-height:1.4; white-space: pre-wrap;">${messageWithLinks}</p>
-      `;
-      container.appendChild(card);
-    });
-  } catch (err) {
-    container.innerHTML = "<p class='text-muted'>Поки немає жодних оголошень.</p>";
-  }
-}
-
-async function sendBroadcastMessage() {
-  const title = document.getElementById("broadcast-title").value.trim();
-  const message = document.getElementById("broadcast-body").value.trim();
-  if (!title || !message) {
-    alert("Будь ласка, заповніть тему та текст");
-    return;
-  }
-
-  const res = await apiRequest("/api/broadcast", "POST", { title, message });
-  alert(`Оголошення надіслано ${res.sent_to} студентам та збережено!`);
-  
-  document.getElementById("broadcast-title").value = "";
-  document.getElementById("broadcast-body").value = "";
-  await loadAnnouncements();
 }
 
 function openProfileModal() {

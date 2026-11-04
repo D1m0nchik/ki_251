@@ -90,12 +90,16 @@ def get_reminder_keyboard(reminder_id: int):
         [InlineKeyboardButton(text="✅ Я виконав", callback_data=f"done_reminder_{reminder_id}")]
     ])
 
-def build_poll_keyboard(poll_id: int, options: list):
+def build_poll_keyboard(poll_id: int, options: list, allow_custom: bool = False):
     inline_keyboard = []
     for opt in options:
         btn_text = f"🔘 {opt['text']}"
         inline_keyboard.append([
             InlineKeyboardButton(text=btn_text, callback_data=f"poll_vote_{poll_id}_{opt['id']}")
+        ])
+    if allow_custom:
+        inline_keyboard.append([
+            InlineKeyboardButton(text="✍️ Інше (запропонувати свій варіант)", callback_data=f"poll_vote_custom_{poll_id}")
         ])
     return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
 
@@ -368,18 +372,20 @@ async def sync_month_schedule(x_telegram_init_data: str = Header(default="")):
         raise HTTPException(status_code=500, detail=f"Помилка парсера: {str(e)}")
 
 # ==============================================================
-# ЖИВІ ОПИТУВАННЯ (LIVE POLLS)
+# ЖИВІ ОПИТУВАННЯ (LIVE POLLS) З ВАРІАНТОМ "ІНШЕ"
 # ==============================================================
 
 class PollCreateRequest(BaseModel):
     question: str
     options: List[str]
     is_multiple: bool = False
+    allow_custom: bool = False
     deadline_at: Optional[str] = None
 
 class PollVoteRequest(BaseModel):
     poll_id: int
     option_id: int
+    custom_text: Optional[str] = ""
 
 @app.get("/api/polls")
 async def get_polls(x_telegram_init_data: str = Header(...)):
@@ -392,7 +398,7 @@ async def get_polls(x_telegram_init_data: str = Header(...)):
         is_starosta = u and u["role"] == "starosta"
 
         poll_rows = await conn.fetch("""
-            SELECT id, question, options, is_multiple, is_active,
+            SELECT id, question, options, is_multiple, is_active, allow_custom,
                    to_char(deadline_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as deadline_str,
                    to_char(created_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as created_str,
                    deadline_at
@@ -405,22 +411,31 @@ async def get_polls(x_telegram_init_data: str = Header(...)):
             p_dict = dict(p)
             opts = json.loads(p_dict["options"]) if isinstance(p_dict["options"], str) else p_dict["options"]
             
-            votes = await conn.fetch("SELECT option_id, telegram_id FROM poll_votes WHERE poll_id = $1", p_dict["id"])
+            votes = await conn.fetch("SELECT option_id, telegram_id, custom_text FROM poll_votes WHERE poll_id = $1", p_dict["id"])
             total_voters = len(set([v["telegram_id"] for v in votes]))
             my_votes = [v["option_id"] for v in votes if v["telegram_id"] == tg_id]
+            
+            my_custom_vote = next((v["custom_text"] for v in votes if v["telegram_id"] == tg_id and v["option_id"] == 999), "")
 
             for opt in opts:
                 count = sum(1 for v in votes if v["option_id"] == opt["id"])
                 opt["votes_count"] = count
                 opt["percent"] = round((count / total_voters * 100)) if total_voters > 0 else 0
 
+            # Підрахунок для варіанту "Інше" (id=999)
+            custom_votes_count = sum(1 for v in votes if v["option_id"] == 999)
+            custom_percent = round((custom_votes_count / total_voters * 100)) if total_voters > 0 else 0
+
             p_dict["options"] = opts
+            p_dict["custom_votes_count"] = custom_votes_count
+            p_dict["custom_percent"] = custom_percent
             p_dict["total_voters"] = total_voters
             p_dict["my_votes"] = my_votes
+            p_dict["my_custom_vote"] = my_custom_vote
 
             if is_starosta:
                 voters_details = await conn.fetch("""
-                    SELECT pv.option_id, u.full_name, u.subgroup 
+                    SELECT pv.option_id, pv.custom_text, u.full_name, u.subgroup 
                     FROM poll_votes pv
                     JOIN users u ON u.telegram_id = pv.telegram_id
                     WHERE pv.poll_id = $1
@@ -460,25 +475,26 @@ async def create_poll(data: PollCreateRequest, x_telegram_init_data: str = Heade
         options_json = [{"id": idx + 1, "text": opt} for idx, opt in enumerate(clean_options)]
 
         poll_row = await conn.fetchrow("""
-            INSERT INTO polls (question, options, is_multiple, deadline_at)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO polls (question, options, is_multiple, allow_custom, deadline_at)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING id
-        """, data.question.strip(), json.dumps(options_json, ensure_ascii=False), data.is_multiple, deadline_utc)
+        """, data.question.strip(), json.dumps(options_json, ensure_ascii=False), data.is_multiple, data.allow_custom, deadline_utc)
         poll_id = poll_row["id"]
 
         students = await conn.fetch("SELECT telegram_id FROM users")
 
     type_str = "Кілька варіантів" if data.is_multiple else "Один варіант"
+    custom_str = " · Можна свій варіант" if data.allow_custom else ""
     deadline_str = f"\n⏳ <b>До:</b> {deadline_utc.astimezone(KYIV_TZ).strftime('%d.%m.%Y %H:%M')}" if deadline_utc else ""
     
     text = (
         f"📊 <b>НОВЕ ОПИТУВАННЯ ВІД СТАРОСТИ</b>\n\n"
         f"❓ <b>{data.question.strip()}</b>\n"
-        f"ℹ️ <i>Тип: {type_str}</i>{deadline_str}\n\n"
+        f"ℹ️ <i>Тип: {type_str}{custom_str}</i>{deadline_str}\n\n"
         f"<i>Натисніть кнопку під цим повідомленням, щоб проголосувати, або відкрийте вкладку «Новини» у додатку:</i>"
     )
 
-    kb = build_poll_keyboard(poll_id, options_json)
+    kb = build_poll_keyboard(poll_id, options_json, data.allow_custom)
     for s in students:
         try:
             await bot.send_message(chat_id=s["telegram_id"], text=text, parse_mode="HTML", reply_markup=kb)
@@ -494,16 +510,19 @@ async def vote_poll(data: PollVoteRequest, x_telegram_init_data: str = Header(..
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        poll = await conn.fetchrow("SELECT is_active, is_multiple FROM polls WHERE id = $1", data.poll_id)
+        poll = await conn.fetchrow("SELECT is_active, is_multiple, allow_custom FROM polls WHERE id = $1", data.poll_id)
         if not poll or not poll["is_active"]:
             raise HTTPException(status_code=400, detail="Опитування вже закрито")
+
+        if data.option_id == 999 and not poll["allow_custom"]:
+            raise HTTPException(status_code=400, detail="Власний варіант заборонено в цьому опитуванні")
 
         existing = await conn.fetchrow(
             "SELECT id FROM poll_votes WHERE poll_id = $1 AND telegram_id = $2 AND option_id = $3",
             data.poll_id, tg_id, data.option_id
         )
 
-        if existing:
+        if existing and data.option_id != 999:
             await conn.execute("DELETE FROM poll_votes WHERE id = $1", existing["id"])
             return {"status": "removed"}
         else:
@@ -511,10 +530,11 @@ async def vote_poll(data: PollVoteRequest, x_telegram_init_data: str = Header(..
                 await conn.execute("DELETE FROM poll_votes WHERE poll_id = $1 AND telegram_id = $2", data.poll_id, tg_id)
             
             await conn.execute("""
-                INSERT INTO poll_votes (poll_id, telegram_id, option_id)
-                VALUES ($1, $2, $3)
-                ON CONFLICT DO NOTHING
-            """, data.poll_id, tg_id, data.option_id)
+                INSERT INTO poll_votes (poll_id, telegram_id, option_id, custom_text)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (poll_id, telegram_id, option_id) 
+                DO UPDATE SET custom_text = EXCLUDED.custom_text
+            """, data.poll_id, tg_id, data.option_id, data.custom_text.strip())
             return {"status": "voted"}
 
 @app.post("/api/polls/close")
@@ -535,7 +555,7 @@ async def close_poll(poll_id: int = Query(...), x_telegram_init_data: str = Head
         await conn.execute("UPDATE polls SET is_active = FALSE WHERE id = $1", poll_id)
 
         opts = json.loads(poll["options"]) if isinstance(poll["options"], str) else poll["options"]
-        votes = await conn.fetch("SELECT option_id, telegram_id FROM poll_votes WHERE poll_id = $1", poll_id)
+        votes = await conn.fetch("SELECT option_id, telegram_id, custom_text FROM poll_votes WHERE poll_id = $1", poll_id)
         total_voters = len(set([v["telegram_id"] for v in votes]))
 
         report_lines = [f"📊 <b>ПІДСУМКИ ОПИТУВАННЯ ЗАВЕРШЕНО:</b>\n\n❓ <b>{poll['question']}</b>\n👥 Всього проголосувало: <b>{total_voters}</b>\n"]
@@ -543,6 +563,14 @@ async def close_poll(poll_id: int = Query(...), x_telegram_init_data: str = Head
             count = sum(1 for v in votes if v["option_id"] == opt["id"])
             pct = round((count / total_voters * 100)) if total_voters > 0 else 0
             report_lines.append(f"• <b>{opt['text']}</b>: {count} голосів ({pct}%)")
+
+        custom_votes = [v for v in votes if v["option_id"] == 999]
+        if custom_votes:
+            c_pct = round((len(custom_votes) / total_voters * 100)) if total_voters > 0 else 0
+            report_lines.append(f"• <b>Інше (свої варіанти)</b>: {len(custom_votes)} голосів ({c_pct}%):")
+            for cv in custom_votes:
+                if cv["custom_text"]:
+                    report_lines.append(f"  — «{cv['custom_text']}»")
 
         final_msg = "\n".join(report_lines)
 
@@ -674,12 +702,10 @@ async def background_reminder_notifier():
                 continue
 
             async with pool.acquire() as conn:
-                # 1. Автоматичне завершення опитувань, у яких вичерпався дедлайн
                 expired_polls = await conn.fetch("SELECT id, question FROM polls WHERE is_active = TRUE AND deadline_at <= NOW()")
                 for ep in expired_polls:
                     await conn.execute("UPDATE polls SET is_active = FALSE WHERE id = $1", ep["id"])
 
-                # 2. Нагадування про дедлайни
                 expired_reminders = await conn.fetch("""
                     SELECT id, title, description, deadline_at
                     FROM reminders

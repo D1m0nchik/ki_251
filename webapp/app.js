@@ -20,6 +20,8 @@ let calCurrentMonth = 10;
 let calMarkedDays = [];
 let activeMatrixDateStr = null;
 
+let currentCustomVotePollId = null;
+
 function maskDateInput(input) {
   let v = input.value.replace(/\D/g, "");
   if (v.length > 8) v = v.substring(0, 8);
@@ -388,7 +390,7 @@ function renderSchedule(lessonsList) {
 }
 
 // =========================================================
-// ЖИВІ ОПИТУВАННЯ (LIVE POLLS)
+// ЖИВІ ОПИТУВАННЯ (LIVE POLLS) З ВАРІАНТОМ "ІНШЕ"
 // =========================================================
 
 async function loadPolls() {
@@ -428,13 +430,29 @@ async function loadPolls() {
         `;
       });
 
+      // Рендер кнопки "Інше" (якщо дозволено)
+      if (poll.allow_custom) {
+        const hasCustomVote = poll.my_votes && poll.my_votes.includes(999);
+        const customCheckIcon = hasCustomVote ? "✅ " : "✍️ ";
+        const customTextDisplay = poll.my_custom_vote ? `«${poll.my_custom_vote}»` : "Інше (свій варіант)";
+        const clickHandler = poll.is_active ? `onclick="openCustomVoteModal(${poll.id}, '${(poll.my_custom_vote || '').replace(/'/g, "\\'")}')"` : "";
+
+        optionsHtml += `
+          <button class="poll-option-btn ${hasCustomVote ? 'selected' : ''}" ${clickHandler} style="border-style: dashed;">
+            <div class="opt-fill" style="width: ${poll.custom_percent || 0}%;"></div>
+            <div class="opt-content">
+              <span>${customCheckIcon}${customTextDisplay}</span>
+              <span style="font-weight: 700; color: #a29bfe;">${poll.custom_percent || 0}% (${poll.custom_votes_count || 0})</span>
+            </div>
+          </button>
+        `;
+      }
+
       let starostaControls = "";
       if (isStarosta) {
         const closeBtn = poll.is_active
           ? `<button onclick="closePollItem(${poll.id})" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; color: #ff6b81; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">Завершити</button>`
           : "";
-
-        const safePollStr = JSON.stringify(poll).replace(/"/g, '&quot;');
 
         starostaControls = `
           <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 8px; border-top: 1px solid #232435;">
@@ -451,6 +469,7 @@ async function loadPolls() {
         </div>
         <div style="font-size: 11px; color: #8e8ea0;">
           Голосів: <b>${poll.total_voters}</b> ${poll.is_multiple ? '· Кілька варіантів' : '· Один варіант'}
+          ${poll.allow_custom ? ' · Свій варіант дозволено' : ''}
           ${poll.deadline_str ? ` · До: ${poll.deadline_str}` : ''}
         </div>
         <div style="display: flex; flex-direction: column; gap: 6px;">
@@ -469,6 +488,40 @@ async function castVote(pollId, optionId) {
   try {
     await apiRequest("/api/polls/vote", "POST", { poll_id: pollId, option_id: optionId });
     await loadPolls();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function openCustomVoteModal(pollId, existingText = "") {
+  currentCustomVotePollId = pollId;
+  const input = document.getElementById("poll-custom-input-text");
+  if (input) input.value = existingText;
+  document.getElementById("poll-custom-vote-modal").style.display = "flex";
+  document.body.style.overflow = "hidden";
+}
+
+function closeCustomVoteModal() {
+  document.getElementById("poll-custom-vote-modal").style.display = "none";
+  document.body.style.overflow = "";
+}
+
+async function submitCustomVote() {
+  const text = document.getElementById("poll-custom-input-text").value.trim();
+  if (!text) {
+    alert("Будь ласка, введіть вашу пропозицію або відповідь");
+    return;
+  }
+
+  try {
+    await apiRequest("/api/polls/vote", "POST", {
+      poll_id: currentCustomVotePollId,
+      option_id: 999,
+      custom_text: text
+    });
+    closeCustomVoteModal();
+    await loadPolls();
+    if (tg && tg.showPopup) tg.showPopup({ message: "Ваш варіант збережено!" });
   } catch (err) {
     alert(err.message);
   }
@@ -499,7 +552,7 @@ function addPollOptionField() {
   const container = document.getElementById("poll-options-inputs");
   const inputsCount = container.querySelectorAll("input").length;
   if (inputsCount >= 6) {
-    alert("Максимум 6 варіантів");
+    alert("Максимум 6 фіксованих варіантів");
     return;
   }
   const input = document.createElement("input");
@@ -514,6 +567,7 @@ async function submitNewPoll() {
   const optionInputs = document.querySelectorAll(".poll-opt-input");
   const options = Array.from(optionInputs).map(inp => inp.value.trim()).filter(v => v);
   const is_multiple = document.getElementById("poll-is-multiple").checked;
+  const allow_custom = document.getElementById("poll-allow-custom").checked;
   const deadline = document.getElementById("poll-deadline").value;
 
   if (!question || options.length < 2) {
@@ -526,6 +580,7 @@ async function submitNewPoll() {
       question,
       options,
       is_multiple,
+      allow_custom,
       deadline_at: deadline || null
     });
     closeCreatePollModal();
@@ -566,6 +621,19 @@ async function openPollDetails(pollId) {
       `;
       body.appendChild(block);
     });
+
+    // Варіанти "Інше" зі своїми текстами
+    const customVotes = (poll.voters_details || []).filter(v => v.option_id === 999);
+    if (customVotes.length > 0) {
+      const cList = customVotes.map(cv => `• <b>${cv.full_name}</b>: «${cv.custom_text || 'Без тексту'}»`).join("<br>");
+      const cBlock = document.createElement("div");
+      cBlock.style.cssText = "background: rgba(162, 155, 254, 0.12); border: 1px solid rgba(162, 155, 254, 0.4); border-radius: 8px; padding: 10px;";
+      cBlock.innerHTML = `
+        <strong style="color: #a29bfe; font-size: 13px;">✍️ Власні варіанти ("Інше") (${customVotes.length}):</strong>
+        <div style="font-size: 12px; color: #ffffff; margin-top: 4px; line-height: 1.4;">${cList}</div>
+      `;
+      body.appendChild(cBlock);
+    }
 
     const nonVoters = poll.non_voters || [];
     if (nonVoters.length > 0) {

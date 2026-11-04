@@ -256,7 +256,6 @@ textarea {
   white-space: nowrap;
 }
 
-/* Компактні бейджі підгруп (тільки коли 1 або 2) */
 .tag-sg-1 {
   font-size: 10px;
   font-weight: 700;
@@ -281,7 +280,6 @@ textarea {
   line-height: 1.2;
 }
 
-/* Компактний бейдж вибіркової */
 .tag-elective {
   font-size: 10px;
   font-weight: 700;
@@ -356,10 +354,7 @@ textarea {
   box-sizing: border-box;
 }
 
-/* =========================================================
-   СТИЛІ ЖИВИХ ОПИТУВАНЬ (LIVE POLLS)
-   ========================================================= */
-
+/* СТИЛІ ЖИВИХ ОПИТУВАНЬ */
 .poll-card {
   background: #171822;
   border: 1px solid #282a3d;

@@ -3,6 +3,8 @@ import asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from database import get_db_pool
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -10,6 +12,9 @@ WEBAPP_URL = os.environ.get("WEBAPP_URL", "https://ki-251.onrender.com/app")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+class PollCustomVoteState(StatesGroup):
+    waiting_for_custom_text = State()
 
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -66,8 +71,63 @@ async def handle_done_reminder_callback(callback: types.CallbackQuery):
     except Exception:
         pass
 
+@dp.callback_query(F.data.startswith("poll_vote_custom_"))
+async def handle_poll_vote_custom_callback(callback: types.CallbackQuery, state: FSMContext):
+    poll_id = int(callback.data.split("_")[3])
+    
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        poll = await conn.fetchrow("SELECT is_active, allow_custom FROM polls WHERE id = $1", poll_id)
+        if not poll or not poll["is_active"] or not poll["allow_custom"]:
+            await callback.answer("Опитування вже закрито або власний варіант не дозволено.", show_alert=True)
+            return
+
+    await state.set_state(PollCustomVoteState.waiting_for_custom_text)
+    await state.update_data(poll_id=poll_id)
+    await callback.answer()
+    await callback.message.answer(
+        "✍️ <b>Введіть ваш варіант відповіді для опитування:</b>\n<i>(Надішліть текст у відповідь на це повідомлення)</i>",
+        parse_mode="HTML"
+    )
+
+@dp.message(PollCustomVoteState.waiting_for_custom_text)
+async def process_custom_poll_text(message: types.Message, state: FSMContext):
+    custom_text = message.text.strip()
+    if not custom_text:
+        await message.answer("Будь ласка, введіть непустий текст варіанту:")
+        return
+
+    data = await state.get_data()
+    poll_id = data.get("poll_id")
+    tg_id = message.from_user.id
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        poll = await conn.fetchrow("SELECT is_active, is_multiple FROM polls WHERE id = $1", poll_id)
+        if not poll or not poll["is_active"]:
+            await message.answer("На жаль, це опитування вже закрите.")
+            await state.clear()
+            return
+
+        if not poll["is_multiple"]:
+            await conn.execute("DELETE FROM poll_votes WHERE poll_id = $1 AND telegram_id = $2", poll_id, tg_id)
+        
+        # option_id = 999 зарезервовано для "Інше"
+        await conn.execute("""
+            INSERT INTO poll_votes (poll_id, telegram_id, option_id, custom_text)
+            VALUES ($1, $2, 999, $3)
+            ON CONFLICT (poll_id, telegram_id, option_id) 
+            DO UPDATE SET custom_text = EXCLUDED.custom_text
+        """, poll_id, tg_id, custom_text)
+
+    await state.clear()
+    await message.answer(f"✅ Ваш варіант збережено: <b>«{custom_text}»</b>!", parse_mode="HTML")
+
 @dp.callback_query(F.data.startswith("poll_vote_"))
 async def handle_poll_vote_callback(callback: types.CallbackQuery):
+    if "poll_vote_custom_" in callback.data:
+        return
+
     parts = callback.data.split("_")
     poll_id = int(parts[2])
     option_id = int(parts[3])
@@ -95,6 +155,6 @@ async def handle_poll_vote_callback(callback: types.CallbackQuery):
             await conn.execute("""
                 INSERT INTO poll_votes (poll_id, telegram_id, option_id)
                 VALUES ($1, $2, $3)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (poll_id, telegram_id, option_id) DO NOTHING
             """, poll_id, tg_id, option_id)
             await callback.answer("Голос враховано!")

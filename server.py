@@ -6,16 +6,17 @@ import csv
 import io
 import re
 import asyncio
+import time
 from urllib.parse import parse_qsl
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Literal
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Header, HTTPException, Response, Query
+from fastapi import FastAPI, Header, HTTPException, Response, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 
 from database import get_db_pool
@@ -24,6 +25,12 @@ from parser import fetch_and_save_schedule
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 STAROSTA_TELEGRAM_ID = int(os.environ.get("STAROSTA_TELEGRAM_ID", 0))
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
+ALLOWED_ORIGINS_RAW = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "https://ki-251.onrender.com,https://web.telegram.org"
+)
+ALLOWED_ORIGINS = [orig.strip() for orig in ALLOWED_ORIGINS_RAW.split(",") if orig.strip()]
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
@@ -31,9 +38,9 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"]
 )
@@ -48,8 +55,41 @@ LESSON_TIMES = {
     7: ("17:20", "18:40")
 }
 
+# ---------------------------------------------------------------------------
+# Rate Limiting (in-memory)
+# ---------------------------------------------------------------------------
+class InMemoryRateLimiter:
+    def __init__(self, requests_limit: int, time_window_seconds: int):
+        self.limit = requests_limit
+        self.window = time_window_seconds
+        self.records: Dict[str, List[float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def check(self, key: str):
+        now = time.monotonic()
+        async with self._lock:
+            timestamps = self.records.get(key, [])
+            valid_timestamps = [t for t in timestamps if now - t < self.window]
+            if len(valid_timestamps) >= self.limit:
+                retry_after = int(self.window - (now - valid_timestamps[0]))
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Забагато запитів. Зачекайте {max(retry_after, 1)} сек."
+                )
+            valid_timestamps.append(now)
+            self.records[key] = valid_timestamps
+
+sync_month_limiter = InMemoryRateLimiter(requests_limit=2, time_window_seconds=60)
+fetch_range_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
+broadcast_limiter = InMemoryRateLimiter(requests_limit=3, time_window_seconds=60)
+poll_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
+reminder_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
+
+# ---------------------------------------------------------------------------
+# Авторизація та перевірка цілісності Telegram initData
+# ---------------------------------------------------------------------------
 def verify_telegram_data(init_data: str) -> dict:
-    if not init_data or init_data.strip() == "":
+    if not init_data or not init_data.strip():
         raise HTTPException(
             status_code=401,
             detail="Неавторизований доступ: відсутні дані ініціалізації Telegram"
@@ -62,10 +102,10 @@ def verify_telegram_data(init_data: str) -> dict:
         hash_received = parsed_data.pop("hash")
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
         
-        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
-        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
         
-        if calculated_hash != hash_received:
+        if not hmac.compare_digest(calculated_hash, hash_received):
             raise HTTPException(
                 status_code=403,
                 detail="Помилка перевірки цілісності: підроблений або недійсний підпис"
@@ -73,13 +113,49 @@ def verify_telegram_data(init_data: str) -> dict:
 
         user_json = parsed_data.get("user")
         if not user_json:
-            raise HTTPException(status_code=401, detail="Дані користувача відсутні")
+            raise HTTPException(status_code=401, detail="Дані користувача відсутні в initData")
 
         return json.loads(user_json)
     except HTTPException:
         raise
     except Exception:
         raise HTTPException(status_code=400, detail="Помилка валідації Telegram-сесії")
+
+async def get_current_user(x_telegram_init_data: str = Header(...)) -> dict:
+    """Перевіряє підпис Telegram і обов'язкову наявність у білому списку (users)."""
+    user = verify_telegram_data(x_telegram_init_data)
+    tg_id = int(user.get("id"))
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
+
+        # Автоматична ініціалізація старости, якщо запис відсутній
+        if not row and tg_id == STAROSTA_TELEGRAM_ID and STAROSTA_TELEGRAM_ID != 0:
+            name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "Староста"
+            await conn.execute(
+                "INSERT INTO users (telegram_id, full_name, subgroup, role, elective_group) VALUES ($1, $2, 1, 'starosta', 0)",
+                tg_id, name
+            )
+            row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
+
+        if not row:
+            raise HTTPException(
+                status_code=403,
+                detail="Доступ обмежено. Вас немає в базі групи КІ-25-1. Зверніться до старости."
+            )
+
+        # Синхронізація ролі старости за ID
+        if tg_id == STAROSTA_TELEGRAM_ID and row["role"] != "starosta":
+            await conn.execute("UPDATE users SET role = 'starosta' WHERE telegram_id = $1", tg_id)
+            row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
+
+        return dict(row)
+
+async def require_starosta(current_user: dict = Depends(get_current_user)) -> dict:
+    if current_user.get("role") != "starosta":
+        raise HTTPException(status_code=403, detail="Доступ дозволено лише старості")
+    return current_user
 
 def linkify_telegram(text: str) -> str:
     url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+|t\.me/[^\s<>"]+)'
@@ -116,57 +192,35 @@ def parse_to_utc(dt_str: str) -> datetime:
         dt_kyiv = dt_naive.astimezone(KYIV_TZ)
     return dt_kyiv.astimezone(timezone.utc)
 
+# ---------------------------------------------------------------------------
+# Ендпоінти профілю
+# ---------------------------------------------------------------------------
 @app.get("/api/user_data")
-async def get_user_data(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
-    
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
-        
-        if not row and tg_id == STAROSTA_TELEGRAM_ID:
-            name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "Староста"
-            await conn.execute(
-                "INSERT INTO users (telegram_id, full_name, subgroup, role, elective_group) VALUES ($1, $2, 1, 'starosta', 0)",
-                tg_id, name
-            )
-            return {"telegram_id": tg_id, "full_name": name, "subgroup": 1, "role": "starosta", "elective_group": 0}
-
-        if not row:
-            raise HTTPException(
-                status_code=403,
-                detail="Доступ обмежено. Вас немає в базі групи КІ-25-1. Зверніться до старости."
-            )
-
-        if tg_id == STAROSTA_TELEGRAM_ID and row["role"] != "starosta":
-            await conn.execute("UPDATE users SET role = 'starosta' WHERE telegram_id = $1", tg_id)
-            return {**dict(row), "role": "starosta"}
-
-        return dict(row)
+async def get_user_data(current_user: dict = Depends(get_current_user)):
+    return current_user
 
 class ProfileUpdateRequest(BaseModel):
-    full_name: str
-    subgroup: int
+    full_name: str = Field(..., min_length=2, max_length=120)
+    subgroup: Literal[1, 2] = Field(..., description="Підгрупа повинна бути строго 1 або 2")
 
 @app.post("/api/user/profile")
-async def update_profile(data: ProfileUpdateRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
-
+async def update_profile(data: ProfileUpdateRequest, current_user: dict = Depends(get_current_user)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         await conn.execute("""
             UPDATE users 
             SET full_name = $1, subgroup = $2 
             WHERE telegram_id = $3
-        """, data.full_name.strip(), data.subgroup, tg_id)
+        """, data.full_name.strip(), data.subgroup, current_user["telegram_id"])
     return {"status": "ok"}
 
+# ---------------------------------------------------------------------------
+# Розклад
+# ---------------------------------------------------------------------------
 SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str, 1, 10), 'DD.MM.YYYY')"
 
 @app.get("/api/schedule/meta")
-async def get_schedule_meta():
+async def get_schedule_meta(current_user: dict = Depends(get_current_user)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         subj_rows = await conn.fetch("""
@@ -188,24 +242,19 @@ class CreateOverrideRequest(BaseModel):
     title_note: Optional[str] = "Об'єднана пара"
     replaces_ids: List[int]
     target_date: str
-    lesson_number: int
-    subject: str
+    lesson_number: int = Field(..., ge=1, le=8)
+    subject: str = Field(..., min_length=1)
     lesson_type: Optional[str] = "Лаб"
     teacher: Optional[str] = ""
     room: Optional[str] = ""
     meet_url: Optional[str] = ""
-    elective_num: Optional[int] = 0
-    target_subgroup: int = 0
+    elective_num: Optional[int] = Field(default=0, ge=0, le=2)
+    target_subgroup: int = Field(default=0, ge=0, le=2)
 
 @app.post("/api/schedule/override/create")
-async def create_schedule_override(data: CreateOverrideRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def create_schedule_override(data: CreateOverrideRequest, starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         try:
             day_dt = datetime.strptime(data.target_date[:10], "%d.%m.%Y")
             days_ua = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
@@ -229,14 +278,9 @@ async def create_schedule_override(data: CreateOverrideRequest, x_telegram_init_
     return {"status": "ok"}
 
 @app.post("/api/schedule/override/delete")
-async def delete_schedule_override(override_id: int = Query(...), x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def delete_schedule_override(override_id: int = Query(...), starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         await conn.execute("DELETE FROM schedule_overrides WHERE id = $1", override_id)
     return {"status": "ok"}
 
@@ -245,21 +289,14 @@ async def get_schedule(
     sdate: Optional[str] = Query(None),
     edate: Optional[str] = Query(None),
     original: bool = Query(False),
-    x_telegram_init_data: str = Header(...)
+    current_user: dict = Depends(get_current_user)
 ):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
-    
+    role = current_user.get("role", "student")
+    subgroup = current_user.get("subgroup", 1)
+    user_elective = current_user.get("elective_group", 0)
+
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        user_row = await conn.fetchrow("SELECT role, subgroup, COALESCE(elective_group, 0) as elective_group FROM users WHERE telegram_id = $1", tg_id)
-        if not user_row and tg_id != STAROSTA_TELEGRAM_ID:
-            raise HTTPException(status_code=403, detail="Доступ обмежено")
-
-        role = user_row["role"] if user_row else ("starosta" if tg_id == STAROSTA_TELEGRAM_ID else "student")
-        subgroup = user_row["subgroup"] if user_row else 1
-        user_elective = user_row["elective_group"] if user_row else 0
-
         if original:
             if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
                 query = f"""
@@ -360,20 +397,52 @@ async def get_schedule(
         return final_lessons
 
 class DateRangeRequest(BaseModel):
-    sdate: str
-    edate: str
+    sdate: str = Field(..., regex=r"^\d{2}\.\d{2}\.\d{4}$")
+    edate: str = Field(..., regex=r"^\d{2}\.\d{2}\.\d{4}$")
 
 @app.post("/api/schedule/fetch_range")
-async def fetch_schedule_range(data: DateRangeRequest, x_telegram_init_data: str = Header(...)):
+async def fetch_schedule_range(
+    data: DateRangeRequest,
+    x_telegram_init_data: str = Header(...),
+    current_user: dict = Depends(get_current_user)
+):
+    # Rate limit на користувача
+    await fetch_range_limiter.check(f"fetch_range_{current_user['telegram_id']}")
+
+    # Запуск парсингу ТІЛЬКИ після успішної верифікації whitelist
     await fetch_and_save_schedule(sdate=data.sdate.strip(), edate=data.edate.strip())
     return await get_schedule(
         sdate=data.sdate.strip(), 
         edate=data.edate.strip(), 
-        x_telegram_init_data=x_telegram_init_data
+        original=False,
+        current_user=current_user
     )
 
 @app.post("/api/schedule/sync_month")
-async def sync_month_schedule(x_telegram_init_data: str = Header(default="")):
+async def sync_month_schedule(
+    request: Request,
+    x_telegram_init_data: Optional[str] = Header(default=None),
+    x_cron_secret: Optional[str] = Header(default=None)
+):
+    # Варіант 1: Запит від зовнішнього сервісу через CRON_SECRET
+    cron_authenticated = False
+    if x_cron_secret and CRON_SECRET:
+        if hmac.compare_digest(x_cron_secret.strip(), CRON_SECRET.strip()):
+            cron_authenticated = True
+
+    # Варіант 2: Запит від студента/старости з білого списку через WebApp
+    caller_id = "cron"
+    if not cron_authenticated:
+        if not x_telegram_init_data:
+            raise HTTPException(
+                status_code=401,
+                detail="Відсутні облікові дані: потрібен заголовок Telegram initData або X-Cron-Secret"
+            )
+        user = await get_current_user(x_telegram_init_data=x_telegram_init_data)
+        caller_id = str(user["telegram_id"])
+
+    await sync_month_limiter.check(f"sync_month_{caller_id}")
+
     try:
         now_dt = datetime.now(KYIV_TZ)
         sdate = now_dt.strftime("%d.%m.%Y")
@@ -383,13 +452,12 @@ async def sync_month_schedule(x_telegram_init_data: str = Header(default="")):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка парсера: {str(e)}")
 
-# ==============================================================
-# ЖИВІ ОПИТУВАННЯ (LIVE POLLS) З ВАРІАНТОМ "ІНШЕ"
-# ==============================================================
-
+# ---------------------------------------------------------------------------
+# Опитування
+# ---------------------------------------------------------------------------
 class PollCreateRequest(BaseModel):
-    question: str
-    options: List[str]
+    question: str = Field(..., min_length=2, max_length=300)
+    options: List[str] = Field(..., min_items=2, max_items=10)
     is_multiple: bool = False
     allow_custom: bool = False
     deadline_at: Optional[str] = None
@@ -397,21 +465,15 @@ class PollCreateRequest(BaseModel):
 class PollVoteRequest(BaseModel):
     poll_id: int
     option_id: int
-    custom_text: Optional[str] = ""
+    custom_text: Optional[str] = Field(default="", max_length=200)
 
 @app.get("/api/polls")
-async def get_polls(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
+async def get_polls(current_user: dict = Depends(get_current_user)):
+    tg_id = current_user["telegram_id"]
+    is_starosta = current_user.get("role") == "starosta"
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", tg_id)
-        if not u and tg_id != STAROSTA_TELEGRAM_ID:
-            raise HTTPException(status_code=403, detail="Доступ обмежено")
-
-        is_starosta = u and u["role"] == "starosta"
-
         poll_rows = await conn.fetch("""
             SELECT id, question, options, is_multiple, is_active, allow_custom,
                    to_char(deadline_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as deadline_str,
@@ -419,7 +481,7 @@ async def get_polls(x_telegram_init_data: str = Header(...)):
                    created_at,
                    deadline_at
             FROM polls
-            ORDER BY id DESC LIMIT 20
+            ORDER BY id DESC LIMIT 15
         """)
 
         result = []
@@ -474,9 +536,8 @@ async def get_polls(x_telegram_init_data: str = Header(...)):
         return result
 
 @app.post("/api/polls/create")
-async def create_poll(data: PollCreateRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
+async def create_poll(data: PollCreateRequest, starosta: dict = Depends(require_starosta)):
+    await poll_create_limiter.check(f"poll_create_{starosta['telegram_id']}")
 
     clean_options = [opt.strip() for opt in data.options if opt.strip()]
     if len(clean_options) < 2:
@@ -484,10 +545,6 @@ async def create_poll(data: PollCreateRequest, x_telegram_init_data: str = Heade
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", tg_id)
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Тільки староста може створювати опитування")
-
         deadline_utc = parse_to_utc(data.deadline_at) if data.deadline_at else None
         options_json = [{"id": idx + 1, "text": opt} for idx, opt in enumerate(clean_options)]
 
@@ -521,9 +578,8 @@ async def create_poll(data: PollCreateRequest, x_telegram_init_data: str = Heade
     return {"status": "ok", "poll_id": poll_id}
 
 @app.post("/api/polls/vote")
-async def vote_poll(data: PollVoteRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
+async def vote_poll(data: PollVoteRequest, current_user: dict = Depends(get_current_user)):
+    tg_id = current_user["telegram_id"]
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -555,16 +611,11 @@ async def vote_poll(data: PollVoteRequest, x_telegram_init_data: str = Header(..
             return {"status": "voted"}
 
 @app.post("/api/polls/close")
-async def close_poll(poll_id: int = Query(...), x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
+async def close_poll(poll_id: int = Query(...), starosta: dict = Depends(require_starosta)):
+    tg_id = starosta["telegram_id"]
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", tg_id)
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         poll = await conn.fetchrow("SELECT * FROM polls WHERE id = $1", poll_id)
         if not poll:
             raise HTTPException(status_code=404, detail="Опитування не знайдено")
@@ -598,20 +649,18 @@ async def close_poll(poll_id: int = Query(...), x_telegram_init_data: str = Head
 
     return {"status": "ok"}
 
-# ==============================================================
-# ДЕДЛАЙНИ ТА СПОВІЩЕННЯ
-# ==============================================================
-
+# ---------------------------------------------------------------------------
+# Дедлайни / Reminders
+# ---------------------------------------------------------------------------
 class ReminderCreateRequest(BaseModel):
-    title: str
-    description: Optional[str] = ""
+    title: str = Field(..., min_length=2, max_length=200)
+    description: Optional[str] = Field(default="", max_length=1000)
     start_at: Optional[str] = None
     deadline_at: str
 
 @app.get("/api/reminders/active")
-async def get_active_reminders(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
+async def get_active_reminders(current_user: dict = Depends(get_current_user)):
+    tg_id = current_user["telegram_id"]
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -638,14 +687,11 @@ async def get_active_reminders(x_telegram_init_data: str = Header(...)):
         return result
 
 @app.post("/api/reminders/create")
-async def create_reminder(data: ReminderCreateRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def create_reminder(data: ReminderCreateRequest, starosta: dict = Depends(require_starosta)):
+    await reminder_create_limiter.check(f"reminder_create_{starosta['telegram_id']}")
+
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Тільки староста може створювати нагадування")
-
         deadline_utc = parse_to_utc(data.deadline_at)
         start_utc = parse_to_utc(data.start_at) if data.start_at else datetime.now(timezone.utc)
 
@@ -678,9 +724,8 @@ async def create_reminder(data: ReminderCreateRequest, x_telegram_init_data: str
     return {"status": "ok", "reminder_id": reminder_id}
 
 @app.post("/api/reminders/complete")
-async def toggle_complete_reminder(reminder_id: int = Query(...), x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
+async def toggle_complete_reminder(reminder_id: int = Query(...), current_user: dict = Depends(get_current_user)):
+    tg_id = current_user["telegram_id"]
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -699,14 +744,9 @@ async def toggle_complete_reminder(reminder_id: int = Query(...), x_telegram_ini
             return {"status": "ok", "completed": True}
 
 @app.post("/api/reminders/delete")
-async def delete_reminder(reminder_id: int = Query(...), x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         await conn.execute("UPDATE reminders SET is_active = FALSE WHERE id = $1", reminder_id)
     return {"status": "ok"}
 
@@ -825,15 +865,13 @@ async def background_reminder_notifier():
 async def startup_event():
     asyncio.create_task(background_reminder_notifier())
 
+# ---------------------------------------------------------------------------
+# Керування групою (староста)
+# ---------------------------------------------------------------------------
 @app.get("/api/group/students")
-async def get_all_group_students(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def get_all_group_students(starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         rows = await conn.fetch("""
             SELECT telegram_id, full_name, subgroup, role, COALESCE(elective_group, 0) as elective_group 
             FROM users 
@@ -843,45 +881,33 @@ async def get_all_group_students(x_telegram_init_data: str = Header(...)):
 
 class ChangeSubgroupRequest(BaseModel):
     student_tg_id: int
-    subgroup: int
+    subgroup: Literal[1, 2]
 
 @app.post("/api/group/change_subgroup")
-async def change_student_subgroup(data: ChangeSubgroupRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def change_student_subgroup(data: ChangeSubgroupRequest, starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         await conn.execute("UPDATE users SET subgroup = $1 WHERE telegram_id = $2", data.subgroup, data.student_tg_id)
     return {"status": "ok"}
 
 class ChangeElectiveRequest(BaseModel):
     student_tg_id: int
-    elective_group: int
+    elective_group: int = Field(..., ge=0, le=2)
 
 @app.post("/api/group/change_elective")
-async def change_student_elective(data: ChangeElectiveRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def change_student_elective(data: ChangeElectiveRequest, starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         await conn.execute("UPDATE users SET elective_group = $1 WHERE telegram_id = $2", data.elective_group, data.student_tg_id)
     return {"status": "ok"}
 
+# ---------------------------------------------------------------------------
+# Журнал та відвідуваність
+# ---------------------------------------------------------------------------
 @app.get("/api/attendance/students")
-async def get_students_for_lesson(schedule_id: int, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def get_students_for_lesson(schedule_id: int, starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         lesson = await conn.fetchrow("SELECT target_subgroup, COALESCE(elective_num, 0) as elective_num FROM schedule WHERE id = $1", schedule_id)
         target_sg = lesson["target_subgroup"] if lesson else 0
         el_num = lesson["elective_num"] if lesson else 0
@@ -899,17 +925,12 @@ async def get_students_for_lesson(schedule_id: int, x_telegram_init_data: str = 
 
 class AttendanceSaveRequest(BaseModel):
     schedule_id: int
-    records: Dict[int, str]
+    records: Dict[int, Literal["present", "absent", "late", "excused"]]
 
 @app.post("/api/attendance/save")
-async def save_attendance(data: AttendanceSaveRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def save_attendance(data: AttendanceSaveRequest, starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         async with conn.transaction():
             for tg_id, status in data.records.items():
                 await conn.execute("""
@@ -922,15 +943,11 @@ async def save_attendance(data: AttendanceSaveRequest, x_telegram_init_data: str
 @app.get("/api/attendance/calendar_meta")
 async def get_attendance_calendar_meta(
     year: int = Query(...),
-    month: int = Query(...),
-    x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+    month: int = Query(..., ge=1, le=12),
+    starosta: dict = Depends(require_starosta)
+):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         rows = await conn.fetch(f"""
             SELECT DISTINCT EXTRACT(DAY FROM {SQL_DATE_CONVERT})::int as day_num
             FROM attendance a
@@ -943,16 +960,10 @@ async def get_attendance_calendar_meta(
         return {"year": year, "month": month, "marked_days": marked_days}
 
 @app.get("/api/attendance/day_matrix")
-async def get_day_matrix(date_str: str = Query(...), x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def get_day_matrix(date_str: str = Query(..., regex=r"^\d{2}\.\d{2}\.\d{4}$"), starosta: dict = Depends(require_starosta)):
+    clean_date = date_str[:10]
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
-        clean_date = date_str[:10]
-
         students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch("""
@@ -986,14 +997,9 @@ class CellToggleRequest(BaseModel):
     telegram_id: int
 
 @app.post("/api/attendance/cell_toggle")
-async def toggle_cell_attendance(data: CellToggleRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def toggle_cell_attendance(data: CellToggleRequest, starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         curr = await conn.fetchval("""
             SELECT status FROM attendance WHERE schedule_id = $1 AND telegram_id = $2
         """, data.schedule_id, data.telegram_id)
@@ -1045,23 +1051,17 @@ def build_matrix_csv(students, lessons, att_dict) -> bytes:
 
 @app.post("/api/attendance/send_to_telegram")
 async def send_attendance_matrix_to_telegram(
-    month: Optional[int] = Query(None),
-    year: Optional[int] = Query(None),
-    x_telegram_init_data: str = Header(...)
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2020, le=2100),
+    starosta: dict = Depends(require_starosta)
 ):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
+    tg_id = starosta["telegram_id"]
+    now = datetime.now()
+    target_year = year or now.year
+    target_month = month or now.month
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", tg_id)
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
-        now = datetime.now()
-        target_year = year or now.year
-        target_month = month or now.month
-
         students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch(f"""
@@ -1097,21 +1097,16 @@ async def send_attendance_matrix_to_telegram(
 
 @app.get("/api/attendance/export_matrix")
 async def export_attendance_matrix_report(
-    month: Optional[int] = Query(None),
-    year: Optional[int] = Query(None),
-    x_telegram_init_data: str = Header(...)
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2020, le=2100),
+    starosta: dict = Depends(require_starosta)
 ):
-    user = verify_telegram_data(x_telegram_init_data)
+    now = datetime.now()
+    target_year = year or now.year
+    target_month = month or now.month
+
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
-        now = datetime.now()
-        target_year = year or now.year
-        target_month = month or now.month
-
         students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch(f"""
@@ -1144,9 +1139,8 @@ async def export_attendance_matrix_report(
     )
 
 @app.get("/api/my_stats")
-async def get_my_stats(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
-    tg_id = int(user.get("id"))
+async def get_my_stats(current_user: dict = Depends(get_current_user)):
+    tg_id = current_user["telegram_id"]
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -1177,14 +1171,9 @@ async def get_my_stats(x_telegram_init_data: str = Header(...)):
     return {"general": general, "subjects": by_subjects}
 
 @app.get("/api/group/stats")
-async def get_group_stats(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def get_group_stats(starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         query = """
             SELECT 
                 u.telegram_id,
@@ -1211,14 +1200,9 @@ async def get_group_stats(x_telegram_init_data: str = Header(...)):
         return result
 
 @app.get("/api/attendance/export")
-async def export_attendance_file(x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def export_attendance_file(starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Доступ заборонено")
-
         query = """
             SELECT 
                 s.date_str,
@@ -1267,8 +1251,11 @@ async def export_attendance_file(x_telegram_init_data: str = Header(...)):
         }
     )
 
+# ---------------------------------------------------------------------------
+# Оголошення та розсилки
+# ---------------------------------------------------------------------------
 @app.get("/api/announcements")
-async def get_announcements():
+async def get_announcements(current_user: dict = Depends(get_current_user)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
@@ -1287,18 +1274,15 @@ async def get_announcements():
         return result
 
 class BroadcastRequest(BaseModel):
-    title: str
-    message: str
+    title: str = Field(..., min_length=2, max_length=200)
+    message: str = Field(..., min_length=2, max_length=2000)
 
 @app.post("/api/broadcast")
-async def broadcast_announcement(data: BroadcastRequest, x_telegram_init_data: str = Header(...)):
-    user = verify_telegram_data(x_telegram_init_data)
+async def broadcast_announcement(data: BroadcastRequest, starosta: dict = Depends(require_starosta)):
+    await broadcast_limiter.check(f"broadcast_{starosta['telegram_id']}")
+
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", int(user.get("id")))
-        if not u or u["role"] != "starosta":
-            raise HTTPException(status_code=403, detail="Тільки староста може робити розсилку")
-
         await conn.execute(
             "INSERT INTO announcements (title, message) VALUES ($1, $2)",
             data.title.strip(), data.message.strip()

@@ -4,8 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>КІ-25-1 | Розклад та Журнал</title>
-  <!-- ?v=6 для гарантованого скидання стилів у Telegram -->
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="style.css?v=7">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -152,9 +151,18 @@
         </div>
       </section>
 
-      <!-- 4. Вкладка Новини / Оголошення -->
+      <!-- 4. Вкладка Новини, Оголошення та Опитування -->
       <section id="tab-news" class="tab-pane">
-        <h2>Оголошення групи</h2>
+        <h2>Оголошення та Опитування</h2>
+        
+        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+          <button id="starosta-create-poll-btn" onclick="openCreatePollModal()" style="display: none; flex: 1; background: linear-gradient(135deg, #0984e3, #74b9ff); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: 800; cursor: pointer;">
+            📊 Створити живе опитування
+          </button>
+        </div>
+
+        <div id="polls-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;"></div>
+
         <div id="starosta-broadcast-panel" class="card" style="display: none; margin-bottom: 16px;">
           <h4>Створити розсилку для групи</h4>
           <input type="text" id="broadcast-title" placeholder="Тема оголошення..." style="width: 100%; margin-bottom: 8px;">
@@ -250,7 +258,6 @@
     </div>
   </div>
 
-  <!-- Модальне вікно об'єднання / перенесення пар -->
   <div id="override-modal" class="modal" style="display: none;">
     <div class="modal-content">
       <h3>🔄 Об'єднання / Перенесення пар</h3>
@@ -307,6 +314,46 @@
     </div>
   </div>
 
+  <!-- Модальне вікно створення опитування -->
+  <div id="poll-create-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h3>📊 Нове живе опитування</h3>
+      <label>Запитання / Тема опитування:</label>
+      <input type="text" id="poll-question" placeholder="Наприклад: Коли здаємо звіт з практики?">
+      
+      <label>Варіанти відповідей (мінімум 2):</label>
+      <div id="poll-options-inputs" style="display: flex; flex-direction: column; gap: 6px;">
+        <input type="text" class="poll-opt-input" placeholder="Варіант 1">
+        <input type="text" class="poll-opt-input" placeholder="Варіант 2">
+      </div>
+      <button onclick="addPollOptionField()" class="btn-secondary" style="font-size: 12px; padding: 6px; margin: 0;">+ Додати варіант</button>
+
+      <label style="display: flex; align-items: center; gap: 8px; margin-top: 4px; cursor: pointer;">
+        <input type="checkbox" id="poll-is-multiple" style="width: 16px; height: 16px;">
+        <span>Дозволити вибір кількох варіантів</span>
+      </label>
+
+      <label>Дедлайн завершення (необов'язково):</label>
+      <input type="datetime-local" id="poll-deadline">
+
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeCreatePollModal()">Скасувати</button>
+        <button class="btn-primary" style="background: #0984e3;" onclick="submitNewPoll()">Запустити та сповістити</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальне вікно детальної статистики опитування -->
+  <div id="poll-details-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-height: 85vh;">
+      <h3 id="poll-details-title">Результати опитування</h3>
+      <div id="poll-details-body" style="overflow-y: auto; display: flex; flex-direction: column; gap: 10px;"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closePollDetailsModal()">Закрити</button>
+      </div>
+    </div>
+  </div>
+
   <div id="attendance-modal" class="modal" style="display: none;">
     <div class="modal-content">
       <h3 id="modal-lesson-title">Журнал пари</h3>
@@ -318,6 +365,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>

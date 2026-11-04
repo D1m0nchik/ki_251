@@ -122,7 +122,6 @@ def verify_telegram_data(init_data: str) -> dict:
         raise HTTPException(status_code=400, detail="Помилка валідації Telegram-сесії")
 
 async def get_current_user(x_telegram_init_data: str = Header(...)) -> dict:
-    """Перевіряє підпис Telegram і обов'язкову наявність у білому списку (users)."""
     user = verify_telegram_data(x_telegram_init_data)
     tg_id = int(user.get("id"))
 
@@ -130,7 +129,6 @@ async def get_current_user(x_telegram_init_data: str = Header(...)) -> dict:
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
 
-        # Автоматична ініціалізація старости, якщо запис відсутній
         if not row and tg_id == STAROSTA_TELEGRAM_ID and STAROSTA_TELEGRAM_ID != 0:
             name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "Староста"
             await conn.execute(
@@ -145,7 +143,6 @@ async def get_current_user(x_telegram_init_data: str = Header(...)) -> dict:
                 detail="Доступ обмежено. Вас немає в базі групи КІ-25-1. Зверніться до старости."
             )
 
-        # Синхронізація ролі старости за ID
         if tg_id == STAROSTA_TELEGRAM_ID and row["role"] != "starosta":
             await conn.execute("UPDATE users SET role = 'starosta' WHERE telegram_id = $1", tg_id)
             row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
@@ -397,8 +394,8 @@ async def get_schedule(
         return final_lessons
 
 class DateRangeRequest(BaseModel):
-    sdate: str = Field(..., regex=r"^\d{2}\.\d{2}\.\d{4}$")
-    edate: str = Field(..., regex=r"^\d{2}\.\d{2}\.\d{4}$")
+    sdate: str = Field(..., pattern=r"^\d{2}\.\d{2}\.\d{4}$")
+    edate: str = Field(..., pattern=r"^\d{2}\.\d{2}\.\d{4}$")
 
 @app.post("/api/schedule/fetch_range")
 async def fetch_schedule_range(
@@ -406,10 +403,8 @@ async def fetch_schedule_range(
     x_telegram_init_data: str = Header(...),
     current_user: dict = Depends(get_current_user)
 ):
-    # Rate limit на користувача
     await fetch_range_limiter.check(f"fetch_range_{current_user['telegram_id']}")
 
-    # Запуск парсингу ТІЛЬКИ після успішної верифікації whitelist
     await fetch_and_save_schedule(sdate=data.sdate.strip(), edate=data.edate.strip())
     return await get_schedule(
         sdate=data.sdate.strip(), 
@@ -424,13 +419,11 @@ async def sync_month_schedule(
     x_telegram_init_data: Optional[str] = Header(default=None),
     x_cron_secret: Optional[str] = Header(default=None)
 ):
-    # Варіант 1: Запит від зовнішнього сервісу через CRON_SECRET
     cron_authenticated = False
     if x_cron_secret and CRON_SECRET:
         if hmac.compare_digest(x_cron_secret.strip(), CRON_SECRET.strip()):
             cron_authenticated = True
 
-    # Варіант 2: Запит від студента/старости з білого списку через WebApp
     caller_id = "cron"
     if not cron_authenticated:
         if not x_telegram_init_data:
@@ -457,7 +450,7 @@ async def sync_month_schedule(
 # ---------------------------------------------------------------------------
 class PollCreateRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=300)
-    options: List[str] = Field(..., min_items=2, max_items=10)
+    options: List[str] = Field(..., min_length=2, max_length=10)
     is_multiple: bool = False
     allow_custom: bool = False
     deadline_at: Optional[str] = None
@@ -960,7 +953,10 @@ async def get_attendance_calendar_meta(
         return {"year": year, "month": month, "marked_days": marked_days}
 
 @app.get("/api/attendance/day_matrix")
-async def get_day_matrix(date_str: str = Query(..., regex=r"^\d{2}\.\d{2}\.\d{4}$"), starosta: dict = Depends(require_starosta)):
+async def get_day_matrix(
+    date_str: str = Query(..., pattern=r"^\d{2}\.\d{2}\.\d{4}$"),
+    starosta: dict = Depends(require_starosta)
+):
     clean_date = date_str[:10]
     pool = await get_db_pool()
     async with pool.acquire() as conn:

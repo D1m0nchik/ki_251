@@ -78,6 +78,9 @@ async function init() {
       const broadcastPanel = document.getElementById("starosta-broadcast-panel");
       if (broadcastPanel) broadcastPanel.style.display = "block";
 
+      const pollBtn = document.getElementById("starosta-create-poll-btn");
+      if (pollBtn) pollBtn.style.display = "block";
+
       const subgroupSwitcher = document.getElementById("starosta-subgroup-switcher");
       if (subgroupSwitcher) subgroupSwitcher.style.display = "flex";
 
@@ -126,6 +129,7 @@ async function refreshAllData(isBackground = false) {
   try {
     await loadSchedule(isBackground);
     loadActiveReminders().catch(e => console.error(e));
+    loadPolls().catch(e => console.error(e));
     loadAnnouncements().catch(e => console.error(e));
     loadMyStats().catch(e => console.error(e));
     if (currentUser && currentUser.role === "starosta") {
@@ -313,7 +317,6 @@ function renderSchedule(lessonsList) {
         ? `<button class="btn-journal" onclick="openAttendanceModal(${item.id}, '${item.subject.replace(/'/g, "\\'")}')">📝 Журнал</button>`
         : "";
 
-      // ТІЛЬКИ якщо пара для 1 або 2 підгрупи — показуємо плашку. Якщо для обох (0) — плашка НЕ показується взагалі!
       let sgTag = "";
       if (item.target_subgroup === 1) {
         sgTag = `<span class="tag-sg-1">1 підгр.</span>`;
@@ -321,7 +324,6 @@ function renderSchedule(lessonsList) {
         sgTag = `<span class="tag-sg-2">2 підгр.</span>`;
       }
 
-      // Плашка вибіркової
       let electiveTag = "";
       if (item.elective_num && item.elective_num > 0) {
         electiveTag = `<span class="tag-elective">★ Вибіркова ${item.elective_num}</span>`;
@@ -358,7 +360,6 @@ function renderSchedule(lessonsList) {
         ${onlineBadge}
         ${replacementHtml}
         
-        <!-- Верхній рядок: номер, час та плашки в одному рядку -->
         <div class="lesson-header-line">
           <div class="lesson-title-badges">
             <h4>${item.lesson_number} пара (${item.time_start} - ${item.time_end})</h4>
@@ -371,7 +372,6 @@ function renderSchedule(lessonsList) {
           </div>
         </div>
 
-        <!-- Назва предмета та викладач -->
         <p style="margin:2px 0 2px 0; font-size:14px; line-height:1.35;">
           <strong>${item.subject}</strong> (${item.lesson_type})
         </p>
@@ -385,6 +385,207 @@ function renderSchedule(lessonsList) {
 
     container.appendChild(daySection);
   }
+}
+
+// =========================================================
+// ЖИВІ ОПИТУВАННЯ (LIVE POLLS)
+// =========================================================
+
+async function loadPolls() {
+  const container = document.getElementById("polls-list");
+  if (!container) return;
+
+  try {
+    const polls = await apiRequest("/api/polls");
+    container.innerHTML = "";
+
+    if (!polls || polls.length === 0) return;
+
+    const isStarosta = currentUser && currentUser.role === "starosta";
+
+    polls.forEach(poll => {
+      const card = document.createElement("div");
+      card.className = "poll-card";
+
+      const statusBadge = poll.is_active
+        ? `<span class="poll-status-badge poll-active">Активне</span>`
+        : `<span class="poll-status-badge poll-closed">Завершено</span>`;
+
+      let optionsHtml = "";
+      poll.options.forEach(opt => {
+        const isSelected = poll.my_votes && poll.my_votes.includes(opt.id);
+        const checkIcon = isSelected ? "✅ " : "🔘 ";
+        const clickHandler = poll.is_active ? `onclick="castVote(${poll.id}, ${opt.id})"` : "";
+
+        optionsHtml += `
+          <button class="poll-option-btn ${isSelected ? 'selected' : ''}" ${clickHandler}>
+            <div class="opt-fill" style="width: ${opt.percent}%;"></div>
+            <div class="opt-content">
+              <span>${checkIcon}${opt.text}</span>
+              <span style="font-weight: 700; color: #74b9ff;">${opt.percent}% (${opt.votes_count})</span>
+            </div>
+          </button>
+        `;
+      });
+
+      let starostaControls = "";
+      if (isStarosta) {
+        const closeBtn = poll.is_active
+          ? `<button onclick="closePollItem(${poll.id})" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; color: #ff6b81; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">Завершити</button>`
+          : "";
+
+        const safePollStr = JSON.stringify(poll).replace(/"/g, '&quot;');
+
+        starostaControls = `
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 8px; border-top: 1px solid #232435;">
+            <button onclick="openPollDetails(${poll.id})" style="background: none; border: none; color: #4bcffa; font-size: 12px; font-weight: 700; cursor: pointer;">👥 Хто як голосував</button>
+            ${closeBtn}
+          </div>
+        `;
+      }
+
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+          <strong style="font-size: 15px; color: #fff; line-height: 1.3;">📊 ${poll.question}</strong>
+          ${statusBadge}
+        </div>
+        <div style="font-size: 11px; color: #8e8ea0;">
+          Голосів: <b>${poll.total_voters}</b> ${poll.is_multiple ? '· Кілька варіантів' : '· Один варіант'}
+          ${poll.deadline_str ? ` · До: ${poll.deadline_str}` : ''}
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          ${optionsHtml}
+        </div>
+        ${starostaControls}
+      `;
+      container.appendChild(card);
+    });
+  } catch (err) {
+    console.error("Помилка завантаження опитувань:", err);
+  }
+}
+
+async function castVote(pollId, optionId) {
+  try {
+    await apiRequest("/api/polls/vote", "POST", { poll_id: pollId, option_id: optionId });
+    await loadPolls();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function closePollItem(pollId) {
+  if (!confirm("Завершити це опитування та зафіксувати фінальні результати?")) return;
+  try {
+    await apiRequest(`/api/polls/close?poll_id=${pollId}`, "POST");
+    await loadPolls();
+    if (tg && tg.showPopup) tg.showPopup({ message: "Опитування завершено! Результати надіслано в чат бота." });
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function openCreatePollModal() {
+  document.getElementById("poll-create-modal").style.display = "flex";
+  document.body.style.overflow = "hidden";
+}
+
+function closeCreatePollModal() {
+  document.getElementById("poll-create-modal").style.display = "none";
+  document.body.style.overflow = "";
+}
+
+function addPollOptionField() {
+  const container = document.getElementById("poll-options-inputs");
+  const inputsCount = container.querySelectorAll("input").length;
+  if (inputsCount >= 6) {
+    alert("Максимум 6 варіантів");
+    return;
+  }
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "poll-opt-input";
+  input.placeholder = `Варіант ${inputsCount + 1}`;
+  container.appendChild(input);
+}
+
+async function submitNewPoll() {
+  const question = document.getElementById("poll-question").value.trim();
+  const optionInputs = document.querySelectorAll(".poll-opt-input");
+  const options = Array.from(optionInputs).map(inp => inp.value.trim()).filter(v => v);
+  const is_multiple = document.getElementById("poll-is-multiple").checked;
+  const deadline = document.getElementById("poll-deadline").value;
+
+  if (!question || options.length < 2) {
+    alert("Введіть запитання та мінімум 2 варіанти!");
+    return;
+  }
+
+  try {
+    await apiRequest("/api/polls/create", "POST", {
+      question,
+      options,
+      is_multiple,
+      deadline_at: deadline || null
+    });
+    closeCreatePollModal();
+    document.getElementById("poll-question").value = "";
+    await loadPolls();
+    if (tg && tg.showPopup) tg.showPopup({ message: "Опитування створено та надіслано всім студентам!" });
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function openPollDetails(pollId) {
+  const modal = document.getElementById("poll-details-modal");
+  const title = document.getElementById("poll-details-title");
+  const body = document.getElementById("poll-details-body");
+
+  body.innerHTML = "<p class='loading'>Отримання деталей...</p>";
+  modal.style.display = "flex";
+  document.body.style.overflow = "hidden";
+
+  try {
+    const polls = await apiRequest("/api/polls");
+    const poll = polls.find(p => p.id === pollId);
+    if (!poll) return;
+
+    title.innerText = `Результати: ${poll.question}`;
+    body.innerHTML = "";
+
+    poll.options.forEach(opt => {
+      const whoVoted = (poll.voters_details || []).filter(v => v.option_id === opt.id);
+      const names = whoVoted.map(v => `• ${v.full_name} (${v.subgroup} підгр.)`).join("<br>") || "<i>Немає голосів</i>";
+
+      const block = document.createElement("div");
+      block.style.cssText = "background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px;";
+      block.innerHTML = `
+        <strong style="color: #74b9ff; font-size: 13px;">${opt.text} (${whoVoted.length}):</strong>
+        <div style="font-size: 12px; color: #dcdde1; margin-top: 4px; line-height: 1.4;">${names}</div>
+      `;
+      body.appendChild(block);
+    });
+
+    const nonVoters = poll.non_voters || [];
+    if (nonVoters.length > 0) {
+      const nvNames = nonVoters.map(nv => `• ${nv.full_name}`).join("<br>");
+      const nvBlock = document.createElement("div");
+      nvBlock.style.cssText = "background: rgba(255, 71, 87, 0.08); border: 1px solid rgba(255, 71, 87, 0.3); border-radius: 8px; padding: 10px;";
+      nvBlock.innerHTML = `
+        <strong style="color: #ff6b81; font-size: 13px;">Ще не голосували (${nonVoters.length}):</strong>
+        <div style="font-size: 12px; color: #dcdde1; margin-top: 4px; line-height: 1.4;">${nvNames}</div>
+      `;
+      body.appendChild(nvBlock);
+    }
+  } catch (e) {
+    body.innerHTML = `<p style="color:red;">${e.message}</p>`;
+  }
+}
+
+function closePollDetailsModal() {
+  document.getElementById("poll-details-modal").style.display = "none";
+  document.body.style.overflow = "";
 }
 
 // Календар та Шахматка

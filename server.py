@@ -50,13 +50,15 @@ LESSON_TIMES = {
 
 def verify_telegram_data(init_data: str) -> dict:
     if not init_data or init_data.strip() == "":
-        return {
-            "id": STAROSTA_TELEGRAM_ID if STAROSTA_TELEGRAM_ID != 0 else 123456789,
-            "first_name": "Староста",
-            "last_name": "КІ-25-1"
-        }
+        raise HTTPException(
+            status_code=401,
+            detail="Неавторизований доступ: відсутні дані ініціалізації Telegram"
+        )
     try:
         parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
+        if "hash" not in parsed_data:
+            raise HTTPException(status_code=401, detail="Недійсний підпис запиту")
+
         hash_received = parsed_data.pop("hash")
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
         
@@ -64,18 +66,20 @@ def verify_telegram_data(init_data: str) -> dict:
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
         
         if calculated_hash != hash_received:
-            return {
-                "id": STAROSTA_TELEGRAM_ID if STAROSTA_TELEGRAM_ID != 0 else 123456789,
-                "first_name": "Студент",
-                "last_name": "Тест"
-            }
-        return json.loads(parsed_data.get("user", "{}"))
+            raise HTTPException(
+                status_code=403,
+                detail="Помилка перевірки цілісності: підроблений або недійсний підпис"
+            )
+
+        user_json = parsed_data.get("user")
+        if not user_json:
+            raise HTTPException(status_code=401, detail="Дані користувача відсутні")
+
+        return json.loads(user_json)
+    except HTTPException:
+        raise
     except Exception:
-        return {
-            "id": STAROSTA_TELEGRAM_ID if STAROSTA_TELEGRAM_ID != 0 else 123456789,
-            "first_name": "Студент",
-            "last_name": "Тест"
-        }
+        raise HTTPException(status_code=400, detail="Помилка валідації Telegram-сесії")
 
 def linkify_telegram(text: str) -> str:
     url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+|t\.me/[^\s<>"]+)'
@@ -121,7 +125,6 @@ async def get_user_data(x_telegram_init_data: str = Header(...)):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
         
-        # Якщо старости ще немає в базі — додаємо його автоматично
         if not row and tg_id == STAROSTA_TELEGRAM_ID:
             name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "Староста"
             await conn.execute(
@@ -130,7 +133,6 @@ async def get_user_data(x_telegram_init_data: str = Header(...)):
             )
             return {"telegram_id": tg_id, "full_name": name, "subgroup": 1, "role": "starosta", "elective_group": 0}
 
-        # ⛔ Якщо користувача немає в базі (не внесений старостою) — блокуємо доступ до WebApp
         if not row:
             raise HTTPException(
                 status_code=403,

@@ -416,9 +416,10 @@ async def get_polls(x_telegram_init_data: str = Header(...)):
             SELECT id, question, options, is_multiple, is_active, allow_custom,
                    to_char(deadline_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as deadline_str,
                    to_char(created_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as created_str,
+                   created_at,
                    deadline_at
             FROM polls
-            ORDER BY id DESC LIMIT 15
+            ORDER BY id DESC LIMIT 20
         """)
 
         result = []
@@ -446,6 +447,8 @@ async def get_polls(x_telegram_init_data: str = Header(...)):
             p_dict["total_voters"] = total_voters
             p_dict["my_votes"] = my_votes
             p_dict["my_custom_vote"] = my_custom_vote
+            if p_dict.get("created_at"):
+                p_dict["created_at_iso"] = p_dict["created_at"].isoformat()
 
             if is_starosta:
                 voters_details = await conn.fetch("""
@@ -920,8 +923,7 @@ async def save_attendance(data: AttendanceSaveRequest, x_telegram_init_data: str
 async def get_attendance_calendar_meta(
     year: int = Query(...),
     month: int = Query(...),
-    x_telegram_init_data: str = Header(...)
-):
+    x_telegram_init_data: str = Header(...)):
     user = verify_telegram_data(x_telegram_init_data)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -1271,11 +1273,18 @@ async def get_announcements():
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT id, title, message, 
-                   to_char(created_at, 'DD.MM.YYYY HH24:MI') as date_time
+                   to_char(created_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as date_time,
+                   created_at
             FROM announcements 
-            ORDER BY id DESC
+            ORDER BY id DESC LIMIT 30
         """)
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("created_at"):
+                d["created_at_iso"] = d["created_at"].isoformat()
+            result.append(d)
+        return result
 
 class BroadcastRequest(BaseModel):
     title: str

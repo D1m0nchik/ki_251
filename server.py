@@ -120,15 +120,22 @@ async def get_user_data(x_telegram_init_data: str = Header(...)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", tg_id)
-        role = "starosta" if tg_id == STAROSTA_TELEGRAM_ID else "student"
-        name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "Студент"
-
-        if not row:
+        
+        # Якщо старости ще немає в базі — додаємо його автоматично
+        if not row and tg_id == STAROSTA_TELEGRAM_ID:
+            name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "Староста"
             await conn.execute(
-                "INSERT INTO users (telegram_id, full_name, subgroup, role, elective_group) VALUES ($1, $2, 1, $3, 0)",
-                tg_id, name, role
+                "INSERT INTO users (telegram_id, full_name, subgroup, role, elective_group) VALUES ($1, $2, 1, 'starosta', 0)",
+                tg_id, name
             )
-            return {"telegram_id": tg_id, "full_name": name, "subgroup": 1, "role": role, "elective_group": 0}
+            return {"telegram_id": tg_id, "full_name": name, "subgroup": 1, "role": "starosta", "elective_group": 0}
+
+        # ⛔ Якщо користувача немає в базі (не внесений старостою) — блокуємо доступ до WebApp
+        if not row:
+            raise HTTPException(
+                status_code=403,
+                detail="Доступ обмежено. Вас немає в базі групи КІ-25-1. Зверніться до старости."
+            )
 
         if tg_id == STAROSTA_TELEGRAM_ID and row["role"] != "starosta":
             await conn.execute("UPDATE users SET role = 'starosta' WHERE telegram_id = $1", tg_id)
@@ -244,7 +251,10 @@ async def get_schedule(
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         user_row = await conn.fetchrow("SELECT role, subgroup, COALESCE(elective_group, 0) as elective_group FROM users WHERE telegram_id = $1", tg_id)
-        role = user_row["role"] if user_row else "student"
+        if not user_row and tg_id != STAROSTA_TELEGRAM_ID:
+            raise HTTPException(status_code=403, detail="Доступ обмежено")
+
+        role = user_row["role"] if user_row else ("starosta" if tg_id == STAROSTA_TELEGRAM_ID else "student")
         subgroup = user_row["subgroup"] if user_row else 1
         user_elective = user_row["elective_group"] if user_row else 0
 
@@ -395,6 +405,9 @@ async def get_polls(x_telegram_init_data: str = Header(...)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         u = await conn.fetchrow("SELECT role FROM users WHERE telegram_id = $1", tg_id)
+        if not u and tg_id != STAROSTA_TELEGRAM_ID:
+            raise HTTPException(status_code=403, detail="Доступ обмежено")
+
         is_starosta = u and u["role"] == "starosta"
 
         poll_rows = await conn.fetch("""
@@ -422,7 +435,6 @@ async def get_polls(x_telegram_init_data: str = Header(...)):
                 opt["votes_count"] = count
                 opt["percent"] = round((count / total_voters * 100)) if total_voters > 0 else 0
 
-            # Підрахунок для варіанту "Інше" (id=999)
             custom_votes_count = sum(1 for v in votes if v["option_id"] == 999)
             custom_percent = round((custom_votes_count / total_voters * 100)) if total_voters > 0 else 0
 

@@ -356,6 +356,73 @@ textarea {
   box-sizing: border-box;
 }
 
+/* =========================================================
+   СТИЛІ ЖИВИХ ОПИТУВАНЬ (LIVE POLLS)
+   ========================================================= */
+
+.poll-card {
+  background: #171822;
+  border: 1px solid #282a3d;
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.poll-status-badge {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.poll-active { background: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid rgba(46, 204, 113, 0.4); }
+.poll-closed { background: rgba(142, 142, 160, 0.2); color: #8e8ea0; border: 1px solid #3b3d58; }
+
+.poll-option-btn {
+  width: 100%;
+  background: #202130;
+  border: 1px solid #2f3045;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.poll-option-btn.selected {
+  border-color: #0984e3;
+  background: rgba(9, 132, 227, 0.08);
+}
+
+.poll-option-btn .opt-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(9, 132, 227, 0.2);
+  z-index: 1;
+  transition: width 0.3s ease;
+  pointer-events: none;
+}
+
+.poll-option-btn .opt-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+}
+
 /* Календар місяця та шахматка */
 .btn-cal-nav {
   background: #202130 !important;

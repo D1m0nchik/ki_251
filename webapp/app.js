@@ -409,7 +409,7 @@ function renderSchedule(lessonsList) {
 }
 
 // =========================================================
-// ЄДИНА ХРОНОЛОГІЧНА СТРІЧКА (АКТИВНІ ОПИТУВАННЯ ЗАКРІПЛЕНІ ВГОРІ)
+// ЄДИНА ХРОНОЛОГІЧНА СТРІЧКА
 // =========================================================
 
 async function loadCombinedFeed() {
@@ -807,17 +807,21 @@ function updateAttendanceStatus(tgId, status) {
 
 async function saveAttendance() {
   try {
-    await apiRequest("/api/attendance/save", "POST", {
-      schedule_id: currentActiveLessonId,
-      is_override: currentIsOverride,
+    const payload = {
+      schedule_id: parseInt(currentActiveLessonId),
+      is_override: Boolean(currentIsOverride),
       records: attendanceState
-    });
+    };
+
+    await apiRequest("/api/attendance/save", "POST", payload);
     closeAttendanceModal();
+    
     if (tg && tg.showPopup) {
-      tg.showPopup({ message: "Журнал пари збережено!" });
+      tg.showPopup({ message: "Журнал пари успішно збережено!" });
     } else {
-      alert("Журнал збережено!");
+      alert("Журнал пари успішно збережено!");
     }
+
     if (currentUser && currentUser.role === "starosta") {
       loadGroupStats().catch(e => console.error(e));
     }

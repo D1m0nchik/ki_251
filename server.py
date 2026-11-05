@@ -895,29 +895,55 @@ async def change_student_elective(data: ChangeElectiveRequest, starosta: dict = 
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Журнал та відвідуваність
+# Журнал та відвідуваність (з підтримкою як базових пар, так і замін/об'єднань)
 # ---------------------------------------------------------------------------
 @app.get("/api/attendance/students")
-async def get_students_for_lesson(schedule_id: int, starosta: dict = Depends(require_starosta)):
+async def get_students_for_lesson(
+    schedule_id: int, 
+    is_override: bool = Query(default=False),
+    starosta: dict = Depends(require_starosta)
+):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        lesson = await conn.fetchrow("SELECT target_subgroup, COALESCE(elective_num, 0) as elective_num FROM schedule WHERE id = $1", schedule_id)
+        if is_override:
+            lesson = await conn.fetchrow(
+                "SELECT target_subgroup, COALESCE(elective_num, 0) as elective_num FROM schedule_overrides WHERE id = $1", 
+                schedule_id
+            )
+        else:
+            lesson = await conn.fetchrow(
+                "SELECT target_subgroup, COALESCE(elective_num, 0) as elective_num FROM schedule WHERE id = $1", 
+                schedule_id
+            )
+
         target_sg = lesson["target_subgroup"] if lesson else 0
         el_num = lesson["elective_num"] if lesson else 0
 
-        query = """
-            SELECT u.telegram_id, u.full_name, u.subgroup, COALESCE(a.status, 'absent') as status
-            FROM users u
-            LEFT JOIN attendance a ON a.telegram_id = u.telegram_id AND a.schedule_id = $1
-            WHERE ($2 = 0 OR u.subgroup = $3)
-              AND ($4 = 0 OR COALESCE(u.elective_group, 0) = 0 OR u.elective_group = $4)
-            ORDER BY u.full_name ASC
-        """
+        if is_override:
+            query = """
+                SELECT u.telegram_id, u.full_name, u.subgroup, COALESCE(a.status, 'absent') as status
+                FROM users u
+                LEFT JOIN attendance a ON a.telegram_id = u.telegram_id AND a.override_id = $1
+                WHERE ($2 = 0 OR u.subgroup = $3)
+                  AND ($4 = 0 OR COALESCE(u.elective_group, 0) = 0 OR u.elective_group = $4)
+                ORDER BY u.full_name ASC
+            """
+        else:
+            query = """
+                SELECT u.telegram_id, u.full_name, u.subgroup, COALESCE(a.status, 'absent') as status
+                FROM users u
+                LEFT JOIN attendance a ON a.telegram_id = u.telegram_id AND a.schedule_id = $1
+                WHERE ($2 = 0 OR u.subgroup = $3)
+                  AND ($4 = 0 OR COALESCE(u.elective_group, 0) = 0 OR u.elective_group = $4)
+                ORDER BY u.full_name ASC
+            """
+
         rows = await conn.fetch(query, schedule_id, target_sg, target_sg, el_num)
         return [dict(r) for r in rows]
 
 class AttendanceSaveRequest(BaseModel):
     schedule_id: int
+    is_override: bool = False
     records: Dict[int, Literal["present", "absent", "late", "excused"]]
 
 @app.post("/api/attendance/save")
@@ -926,11 +952,20 @@ async def save_attendance(data: AttendanceSaveRequest, starosta: dict = Depends(
     async with pool.acquire() as conn:
         async with conn.transaction():
             for tg_id, status in data.records.items():
-                await conn.execute("""
-                    INSERT INTO attendance (schedule_id, telegram_id, status)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT(schedule_id, telegram_id) DO UPDATE SET status = EXCLUDED.status
-                """, data.schedule_id, int(tg_id), status)
+                if data.is_override:
+                    await conn.execute("""
+                        INSERT INTO attendance (override_id, telegram_id, status)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (override_id, telegram_id) WHERE override_id IS NOT NULL 
+                        DO UPDATE SET status = EXCLUDED.status
+                    """, data.schedule_id, int(tg_id), status)
+                else:
+                    await conn.execute("""
+                        INSERT INTO attendance (schedule_id, telegram_id, status)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (schedule_id, telegram_id) WHERE schedule_id IS NOT NULL 
+                        DO UPDATE SET status = EXCLUDED.status
+                    """, data.schedule_id, int(tg_id), status)
     return {"status": "ok"}
 
 @app.get("/api/attendance/calendar_meta")
@@ -943,10 +978,21 @@ async def get_attendance_calendar_meta(
     async with pool.acquire() as conn:
         rows = await conn.fetch(f"""
             SELECT DISTINCT EXTRACT(DAY FROM {SQL_DATE_CONVERT})::int as day_num
-            FROM attendance a
-            JOIN schedule s ON s.id = a.schedule_id
-            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
-              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+            FROM (
+                SELECT s.date_str
+                FROM attendance a
+                JOIN schedule s ON s.id = a.schedule_id
+                WHERE a.schedule_id IS NOT NULL
+                  AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+                  AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+                UNION
+                SELECT ov.date_str
+                FROM attendance a
+                JOIN schedule_overrides ov ON ov.id = a.override_id
+                WHERE a.override_id IS NOT NULL
+                  AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+                  AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+            ) combined
         """, month, year)
 
         marked_days = [r["day_num"] for r in rows if r["day_num"] is not None]
@@ -963,42 +1009,72 @@ async def get_day_matrix(
         students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch("""
-            SELECT id, lesson_number, time_start, time_end, subject, lesson_type, room, target_subgroup, meet_url, COALESCE(elective_num, 0) as elective_num
+            SELECT id, lesson_number, time_start, time_end, subject, lesson_type, room, target_subgroup, meet_url, COALESCE(elective_num, 0) as elective_num, FALSE as is_override
             FROM schedule
             WHERE SUBSTRING(date_str, 1, 10) = $1
             ORDER BY lesson_number ASC, target_subgroup ASC
         """, clean_date)
 
+        overrides = await conn.fetch("""
+            SELECT id, lesson_number, time_start, time_end, subject, lesson_type, room, target_subgroup, meet_url, COALESCE(elective_num, 0) as elective_num, TRUE as is_override, replaces_schedule_ids
+            FROM schedule_overrides
+            WHERE SUBSTRING(date_str, 1, 10) = $1
+            ORDER BY lesson_number ASC, target_subgroup ASC
+        """, clean_date)
+
+        replaces_ids = set()
+        active_ovs = []
+        for ov in overrides:
+            ov_dict = dict(ov)
+            if ov_dict.get("replaces_schedule_ids"):
+                replaces_ids.update(ov_dict["replaces_schedule_ids"])
+            active_ovs.append(ov_dict)
+
+        combined_lessons = [dict(l) for l in lessons if l["id"] not in replaces_ids]
+        combined_lessons.extend(active_ovs)
+        combined_lessons.sort(key=lambda x: x["lesson_number"])
+
         att_rows = await conn.fetch("""
-            SELECT a.schedule_id, a.telegram_id, a.status
+            SELECT a.schedule_id, a.override_id, a.telegram_id, a.status
             FROM attendance a
-            JOIN schedule s ON s.id = a.schedule_id
-            WHERE SUBSTRING(s.date_str, 1, 10) = $1
+            LEFT JOIN schedule s ON s.id = a.schedule_id
+            LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
+            WHERE (s.id IS NOT NULL AND SUBSTRING(s.date_str, 1, 10) = $1)
+               OR (ov.id IS NOT NULL AND SUBSTRING(ov.date_str, 1, 10) = $1)
         """, clean_date)
 
         att_map = {}
         for r in att_rows:
-            key = f"{r['schedule_id']}_{r['telegram_id']}"
+            if r["override_id"]:
+                key = f"ov_{r['override_id']}_{r['telegram_id']}"
+            else:
+                key = f"sc_{r['schedule_id']}_{r['telegram_id']}"
             att_map[key] = r["status"]
 
         return {
             "date_str": clean_date,
             "students": [dict(s) for s in students],
-            "lessons": [dict(l) for l in lessons],
+            "lessons": combined_lessons,
             "matrix": att_map
         }
 
 class CellToggleRequest(BaseModel):
     schedule_id: int
     telegram_id: int
+    is_override: bool = False
 
 @app.post("/api/attendance/cell_toggle")
 async def toggle_cell_attendance(data: CellToggleRequest, starosta: dict = Depends(require_starosta)):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        curr = await conn.fetchval("""
-            SELECT status FROM attendance WHERE schedule_id = $1 AND telegram_id = $2
-        """, data.schedule_id, data.telegram_id)
+        if data.is_override:
+            curr = await conn.fetchval("""
+                SELECT status FROM attendance WHERE override_id = $1 AND telegram_id = $2
+            """, data.schedule_id, data.telegram_id)
+        else:
+            curr = await conn.fetchval("""
+                SELECT status FROM attendance WHERE schedule_id = $1 AND telegram_id = $2
+            """, data.schedule_id, data.telegram_id)
 
         next_status_map = {
             "present": "absent",
@@ -1009,11 +1085,20 @@ async def toggle_cell_attendance(data: CellToggleRequest, starosta: dict = Depen
         }
         new_status = next_status_map.get(curr, "present")
 
-        await conn.execute("""
-            INSERT INTO attendance (schedule_id, telegram_id, status)
-            VALUES ($1, $2, $3)
-            ON CONFLICT(schedule_id, telegram_id) DO UPDATE SET status = EXCLUDED.status
-        """, data.schedule_id, data.telegram_id, new_status)
+        if data.is_override:
+            await conn.execute("""
+                INSERT INTO attendance (override_id, telegram_id, status)
+                VALUES ($1, $2, $3)
+                ON CONFLICT(override_id, telegram_id) WHERE override_id IS NOT NULL 
+                DO UPDATE SET status = EXCLUDED.status
+            """, data.schedule_id, data.telegram_id, new_status)
+        else:
+            await conn.execute("""
+                INSERT INTO attendance (schedule_id, telegram_id, status)
+                VALUES ($1, $2, $3)
+                ON CONFLICT(schedule_id, telegram_id) WHERE schedule_id IS NOT NULL 
+                DO UPDATE SET status = EXCLUDED.status
+            """, data.schedule_id, data.telegram_id, new_status)
 
         return {"status": "ok", "new_status": new_status}
 
@@ -1038,7 +1123,8 @@ def build_matrix_csv(students, lessons, att_dict) -> bytes:
         el_label = "Не обрано" if st["elective_group"] == 0 else f"Вибір {st['elective_group']}"
         row = [idx, st["full_name"], f"{st['subgroup']} підгр.", el_label]
         for l in lessons:
-            st_key = f"{l['id']}_{st['telegram_id']}"
+            prefix = "ov_" if l.get("is_override") else "sc_"
+            st_key = f"{prefix}{l['id']}_{st['telegram_id']}"
             val = att_dict.get(st_key, "")
             row.append(status_chars.get(val, ""))
         writer.writerow(row)
@@ -1061,24 +1147,50 @@ async def send_attendance_matrix_to_telegram(
         students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch(f"""
-            SELECT id, date_str, lesson_number, subject
+            SELECT id, date_str, lesson_number, subject, FALSE as is_override
             FROM schedule
             WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
               AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
             ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
         """, target_month, target_year)
 
-        att_records = await conn.fetch(f"""
-            SELECT a.schedule_id, a.telegram_id, a.status
-            FROM attendance a
-            JOIN schedule s ON s.id = a.schedule_id
+        overrides = await conn.fetch(f"""
+            SELECT id, date_str, lesson_number, subject, TRUE as is_override, replaces_schedule_ids
+            FROM schedule_overrides
             WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
               AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+            ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
         """, target_month, target_year)
 
-        att_dict = {f"{r['schedule_id']}_{r['telegram_id']}": r["status"] for r in att_records}
+        replaces_ids = set()
+        active_ovs = []
+        for ov in overrides:
+            d = dict(ov)
+            if d.get("replaces_schedule_ids"):
+                replaces_ids.update(d["replaces_schedule_ids"])
+            active_ovs.append(d)
 
-    csv_bytes = build_matrix_csv(students, lessons, att_dict)
+        combined_lessons = [dict(l) for l in lessons if l["id"] not in replaces_ids]
+        combined_lessons.extend(active_ovs)
+        combined_lessons.sort(key=lambda x: (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x["lesson_number"]))
+
+        att_records = await conn.fetch(f"""
+            SELECT a.schedule_id, a.override_id, a.telegram_id, a.status
+            FROM attendance a
+            LEFT JOIN schedule s ON s.id = a.schedule_id
+            LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
+            WHERE (s.id IS NOT NULL AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+               OR (ov.id IS NOT NULL AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+        """, target_month, target_year)
+
+        att_dict = {}
+        for r in att_records:
+            if r["override_id"]:
+                att_dict[f"ov_{r['override_id']}_{r['telegram_id']}"] = r["status"]
+            else:
+                att_dict[f"sc_{r['schedule_id']}_{r['telegram_id']}"] = r["status"]
+
+    csv_bytes = build_matrix_csv(students, combined_lessons, att_dict)
     filename = f"Відомість_КІ-25-1_{target_month:02d}_{target_year}.csv"
 
     doc = BufferedInputFile(csv_bytes, filename=filename)
@@ -1106,24 +1218,50 @@ async def export_attendance_matrix_report(
         students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
         lessons = await conn.fetch(f"""
-            SELECT id, date_str, lesson_number, subject
+            SELECT id, date_str, lesson_number, subject, FALSE as is_override
             FROM schedule
             WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
               AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
             ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
         """, target_month, target_year)
 
-        att_records = await conn.fetch(f"""
-            SELECT a.schedule_id, a.telegram_id, a.status
-            FROM attendance a
-            JOIN schedule s ON s.id = a.schedule_id
+        overrides = await conn.fetch(f"""
+            SELECT id, date_str, lesson_number, subject, TRUE as is_override, replaces_schedule_ids
+            FROM schedule_overrides
             WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
               AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+            ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
         """, target_month, target_year)
 
-        att_dict = {f"{r['schedule_id']}_{r['telegram_id']}": r["status"] for r in att_records}
+        replaces_ids = set()
+        active_ovs = []
+        for ov in overrides:
+            d = dict(ov)
+            if d.get("replaces_schedule_ids"):
+                replaces_ids.update(d["replaces_schedule_ids"])
+            active_ovs.append(d)
 
-    csv_bytes = build_matrix_csv(students, lessons, att_dict)
+        combined_lessons = [dict(l) for l in lessons if l["id"] not in replaces_ids]
+        combined_lessons.extend(active_ovs)
+        combined_lessons.sort(key=lambda x: (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x["lesson_number"]))
+
+        att_records = await conn.fetch(f"""
+            SELECT a.schedule_id, a.override_id, a.telegram_id, a.status
+            FROM attendance a
+            LEFT JOIN schedule s ON s.id = a.schedule_id
+            LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
+            WHERE (s.id IS NOT NULL AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+               OR (ov.id IS NOT NULL AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+        """, target_month, target_year)
+
+        att_dict = {}
+        for r in att_records:
+            if r["override_id"]:
+                att_dict[f"ov_{r['override_id']}_{r['telegram_id']}"] = r["status"]
+            else:
+                att_dict[f"sc_{r['schedule_id']}_{r['telegram_id']}"] = r["status"]
+
+    csv_bytes = build_matrix_csv(students, combined_lessons, att_dict)
     filename = f"journal_KI251_{target_month:02d}_{target_year}.csv"
     return Response(
         content=csv_bytes,
@@ -1154,15 +1292,16 @@ async def get_my_stats(current_user: dict = Depends(get_current_user)):
 
         rows = await conn.fetch("""
             SELECT 
-                s.subject,
+                COALESCE(s.subject, ov.subject) as subject,
                 COUNT(a.id) as total_subject_lessons,
                 SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) as subject_absent
-            FROM schedule s
-            JOIN attendance a ON a.schedule_id = s.id
+            FROM attendance a
+            LEFT JOIN schedule s ON s.id = a.schedule_id
+            LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
             WHERE a.telegram_id = $1
-            GROUP BY s.subject
+            GROUP BY COALESCE(s.subject, ov.subject)
         """, tg_id)
-        by_subjects = [dict(r) for r in rows]
+        by_subjects = [dict(r) for r in rows if r["subject"] is not None]
 
     return {"general": general, "subjects": by_subjects}
 
@@ -1201,10 +1340,10 @@ async def export_attendance_file(starosta: dict = Depends(require_starosta)):
     async with pool.acquire() as conn:
         query = """
             SELECT 
-                s.date_str,
-                s.day_of_week,
-                s.lesson_number,
-                s.subject,
+                COALESCE(s.date_str, ov.date_str) as date_str,
+                COALESCE(s.day_of_week, ov.day_of_week) as day_of_week,
+                COALESCE(s.lesson_number, ov.lesson_number) as lesson_number,
+                COALESCE(s.subject, ov.subject) as subject,
                 u.full_name,
                 u.subgroup,
                 CASE 
@@ -1215,9 +1354,10 @@ async def export_attendance_file(starosta: dict = Depends(require_starosta)):
                     ELSE 'Не відмічено'
                 END as status_text
             FROM attendance a
-            JOIN schedule s ON s.id = a.schedule_id
+            LEFT JOIN schedule s ON s.id = a.schedule_id
+            LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
             JOIN users u ON u.telegram_id = a.telegram_id
-            ORDER BY s.id ASC, u.full_name ASC
+            ORDER BY date_str ASC, lesson_number ASC, u.full_name ASC
         """
         records = await conn.fetch(query)
 

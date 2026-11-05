@@ -8,6 +8,7 @@ try {
 
 let currentUser = null;
 let currentActiveLessonId = null;
+let currentIsOverride = false;
 let attendanceState = {};
 let allScheduleData = [];
 let selectedSubgroupFilter = 0;
@@ -316,7 +317,7 @@ function renderSchedule(lessonsList) {
 
     lessons.forEach(item => {
       const card = document.createElement("div");
-      const isCustom = item.is_custom_override;
+      const isCustom = Boolean(item.is_custom_override);
       const customClass = isCustom ? "custom-override" : "";
 
       let customBadge = isCustom 
@@ -334,7 +335,7 @@ function renderSchedule(lessonsList) {
         : "";
       
       let starostaBtn = (currentUser && currentUser.role === "starosta")
-        ? `<button class="btn-journal" onclick="openAttendanceModal(${item.id}, '${item.subject.replace(/'/g, "\\'")}')">📝 Журнал</button>`
+        ? `<button class="btn-journal" onclick="openAttendanceModal(${item.id}, '${item.subject.replace(/'/g, "\\'")}', ${isCustom})">📝 Журнал</button>`
         : "";
 
       let sgTag = "";
@@ -442,10 +443,7 @@ async function loadCombinedFeed() {
       feedItems.push(a);
     });
 
-    // Активні опитування сортуємо від найновіших
     activePolls.sort((a, b) => b._timestamp - a._timestamp);
-
-    // Загальну стрічку (завершені опитування + оголошення) сортуємо суворо за часом
     feedItems.sort((a, b) => b._timestamp - a._timestamp);
 
     if (activePolls.length === 0 && feedItems.length === 0) {
@@ -455,12 +453,10 @@ async function loadCombinedFeed() {
 
     const isStarosta = currentUser && currentUser.role === "starosta";
 
-    // 1. Спочатку рендеримо закріплені активні опитування
     activePolls.forEach(poll => {
       container.appendChild(renderPollCard(poll, isStarosta, true));
     });
 
-    // 2. Далі хронологічна стрічка (завершені опитування + оголошення)
     feedItems.forEach(item => {
       if (item._type === "poll") {
         container.appendChild(renderPollCard(item, isStarosta, false));
@@ -756,7 +752,91 @@ async function sendBroadcastMessage() {
   await loadCombinedFeed();
 }
 
+// ---------------------------------------------------------------------------
+// Журнал пари (модальне вікно)
+// ---------------------------------------------------------------------------
+async function openAttendanceModal(scheduleId, subjectName, isOverride = false) {
+  currentActiveLessonId = scheduleId;
+  currentIsOverride = Boolean(isOverride);
+  attendanceState = {};
+
+  const title = document.getElementById("modal-lesson-title");
+  if (title) title.innerText = `Журнал: ${subjectName}`;
+  const list = document.getElementById("modal-students-list");
+  if (list) list.innerHTML = "<p class='loading'>Завантаження студентів...</p>";
+  
+  const modal = document.getElementById("attendance-modal");
+  if (modal) {
+    modal.style.display = "flex";
+    document.body.style.overflow = "hidden";
+  }
+
+  try {
+    const students = await apiRequest(`/api/attendance/students?schedule_id=${scheduleId}&is_override=${currentIsOverride}`);
+    if (list) list.innerHTML = "";
+
+    students.forEach(s => {
+      const currentStatus = s.status || "absent";
+      attendanceState[s.telegram_id] = currentStatus;
+
+      const row = document.createElement("div");
+      row.className = "student-row";
+      row.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #232435; gap: 10px;";
+      
+      row.innerHTML = `
+        <span style="font-size: 14px; font-weight: 600; color: #fff; flex: 1; word-break: break-word; line-height: 1.3;">
+          ${s.full_name} <span style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">(${s.subgroup} підгр.)</span>
+        </span>
+        <select onchange="updateAttendanceStatus(${s.telegram_id}, this.value)" style="width: 130px; min-width: 130px; max-width: 130px; flex-shrink: 0; background: #202130; border: 1px solid #2f3045; color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; text-align: left;">
+          <option value="absent" ${currentStatus === 'absent' ? 'selected' : ''}>❌ Пропуск</option>
+          <option value="present" ${currentStatus === 'present' ? 'selected' : ''}>✅ Був</option>
+          <option value="late" ${currentStatus === 'late' ? 'selected' : ''}>⏳ Запізнився</option>
+          <option value="excused" ${currentStatus === 'excused' ? 'selected' : ''}>📋 Поважна</option>
+        </select>
+      `;
+      list.appendChild(row);
+    });
+  } catch (err) {
+    if (list) list.innerHTML = `<p style="color:red;">${err.message}</p>`;
+  }
+}
+
+function updateAttendanceStatus(tgId, status) {
+  attendanceState[tgId] = status;
+}
+
+async function saveAttendance() {
+  try {
+    await apiRequest("/api/attendance/save", "POST", {
+      schedule_id: currentActiveLessonId,
+      is_override: currentIsOverride,
+      records: attendanceState
+    });
+    closeAttendanceModal();
+    if (tg && tg.showPopup) {
+      tg.showPopup({ message: "Журнал пари збережено!" });
+    } else {
+      alert("Журнал збережено!");
+    }
+    if (currentUser && currentUser.role === "starosta") {
+      loadGroupStats().catch(e => console.error(e));
+    }
+  } catch (err) {
+    alert("Помилка збереження журналу: " + err.message);
+  }
+}
+
+function closeAttendanceModal() {
+  const modal = document.getElementById("attendance-modal");
+  if (modal) {
+    modal.style.display = "none";
+    document.body.style.overflow = "";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Календар та Шахматка
+// ---------------------------------------------------------------------------
 function switchJournalSubTab(subTab) {
   const calView = document.getElementById("journal-view-calendar");
   const statsView = document.getElementById("journal-view-stats");
@@ -906,9 +986,10 @@ function renderDayMatrixTable(data) {
   lessons.forEach(l => {
     const shortSubj = l.subject.length > 15 ? l.subject.substring(0, 13) + '..' : l.subject;
     const elMark = l.elective_num ? ` ★${l.elective_num}` : '';
+    const ovMark = l.is_override ? ' [Заміна]' : '';
     html += `
       <th>
-        <div style="font-size: 11px; color:#a29bfe;">${l.lesson_number} пара${elMark}</div>
+        <div style="font-size: 11px; color:#a29bfe;">${l.lesson_number} пара${elMark}${ovMark}</div>
         <div style="font-size: 12px; margin: 2px 0;">${shortSubj}</div>
         <div style="font-size: 10px; color:#8e8ea0;">${l.time_start}</div>
       </th>
@@ -943,14 +1024,15 @@ function renderDayMatrixTable(data) {
         return;
       }
 
-      const key = `${l.id}_${st.telegram_id}`;
+      const prefix = l.is_override ? "ov_" : "sc_";
+      const key = `${prefix}${l.id}_${st.telegram_id}`;
       const status = matrix[key] || "none";
       const icon = statusIcons[status] || "—";
       const cls = statusClasses[status] || "cell-none";
 
       html += `
         <td>
-          <button class="matrix-cell-btn ${cls}" onclick="onMatrixCellClick(${l.id}, ${st.telegram_id}, this)">
+          <button class="matrix-cell-btn ${cls}" onclick="onMatrixCellClick(${l.id}, ${st.telegram_id}, ${Boolean(l.is_override)}, this)">
             ${icon}
           </button>
         </td>
@@ -964,11 +1046,12 @@ function renderDayMatrixTable(data) {
   container.innerHTML = html;
 }
 
-async function onMatrixCellClick(scheduleId, tgId, btn) {
+async function onMatrixCellClick(scheduleId, tgId, isOverride, btn) {
   try {
     const res = await apiRequest("/api/attendance/cell_toggle", "POST", {
       schedule_id: scheduleId,
-      telegram_id: tgId
+      telegram_id: tgId,
+      is_override: Boolean(isOverride)
     });
 
     const statusIcons = { "present": "✓", "absent": "Н", "late": "О", "excused": "П" };
@@ -1522,78 +1605,6 @@ async function loadMyStats() {
     });
   } catch (e) {
     console.error("Помилка статистики:", e);
-  }
-}
-
-async function openAttendanceModal(scheduleId, subjectName) {
-  currentActiveLessonId = scheduleId;
-  attendanceState = {};
-  const title = document.getElementById("modal-lesson-title");
-  if (title) title.innerText = `Журнал: ${subjectName}`;
-  const list = document.getElementById("modal-students-list");
-  if (list) list.innerHTML = "<p class='loading'>Завантаження студентів...</p>";
-  
-  const modal = document.getElementById("attendance-modal");
-  if (modal) {
-    modal.style.display = "flex";
-    document.body.style.overflow = "hidden";
-  }
-
-  try {
-    const students = await apiRequest(`/api/attendance/students?schedule_id=${scheduleId}`);
-    if (list) list.innerHTML = "";
-
-    students.forEach(s => {
-      const currentStatus = s.status || "absent";
-      attendanceState[s.telegram_id] = currentStatus;
-
-      const row = document.createElement("div");
-      row.className = "student-row";
-      row.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #232435; gap: 10px;";
-      
-      row.innerHTML = `
-        <span style="font-size: 14px; font-weight: 600; color: #fff; flex: 1; word-break: break-word; line-height: 1.3;">
-          ${s.full_name} <span style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">(${s.subgroup} підгр.)</span>
-        </span>
-        <select onchange="updateAttendanceStatus(${s.telegram_id}, this.value)" style="width: 130px; min-width: 130px; max-width: 130px; flex-shrink: 0; background: #202130; border: 1px solid #2f3045; color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 13px; outline: none; text-align: left;">
-          <option value="absent" ${currentStatus === 'absent' ? 'selected' : ''}>❌ Пропуск</option>
-          <option value="present" ${currentStatus === 'present' ? 'selected' : ''}>✅ Був</option>
-          <option value="late" ${currentStatus === 'late' ? 'selected' : ''}>⏳ Запізнився</option>
-          <option value="excused" ${currentStatus === 'excused' ? 'selected' : ''}>📋 Поважна</option>
-        </select>
-      `;
-      list.appendChild(row);
-    });
-  } catch (err) {
-    if (list) list.innerHTML = `<p style="color:red;">${err.message}</p>`;
-  }
-}
-
-function updateAttendanceStatus(tgId, status) {
-  attendanceState[tgId] = status;
-}
-
-async function saveAttendance() {
-  await apiRequest("/api/attendance/save", "POST", {
-    schedule_id: currentActiveLessonId,
-    records: attendanceState
-  });
-  closeAttendanceModal();
-  if (tg && tg.showPopup) {
-    tg.showPopup({ message: "Журнал пари збережено!" });
-  } else {
-    alert("Журнал збережено!");
-  }
-  if (currentUser && currentUser.role === "starosta") {
-    loadGroupStats().catch(e => console.error(e));
-  }
-}
-
-function closeAttendanceModal() {
-  const modal = document.getElementById("attendance-modal");
-  if (modal) {
-    modal.style.display = "none";
-    document.body.style.overflow = "";
   }
 }
 

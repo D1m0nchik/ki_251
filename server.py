@@ -895,7 +895,7 @@ async def change_student_elective(data: ChangeElectiveRequest, starosta: dict = 
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Журнал та відвідуваність (з підтримкою як базових пар, так і замін/об'єднань)
+# Журнал та відвідуваність (надійне збереження без конфлікту індексів)
 # ---------------------------------------------------------------------------
 @app.get("/api/attendance/students")
 async def get_students_for_lesson(
@@ -951,21 +951,26 @@ async def save_attendance(data: AttendanceSaveRequest, starosta: dict = Depends(
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            for tg_id, status in data.records.items():
+            for tg_id_str, status in data.records.items():
+                tg_id = int(tg_id_str)
                 if data.is_override:
+                    await conn.execute("""
+                        DELETE FROM attendance 
+                        WHERE override_id = $1 AND telegram_id = $2
+                    """, data.schedule_id, tg_id)
                     await conn.execute("""
                         INSERT INTO attendance (override_id, telegram_id, status)
                         VALUES ($1, $2, $3)
-                        ON CONFLICT (override_id, telegram_id) WHERE override_id IS NOT NULL 
-                        DO UPDATE SET status = EXCLUDED.status
-                    """, data.schedule_id, int(tg_id), status)
+                    """, data.schedule_id, tg_id, status)
                 else:
+                    await conn.execute("""
+                        DELETE FROM attendance 
+                        WHERE schedule_id = $1 AND telegram_id = $2
+                    """, data.schedule_id, tg_id)
                     await conn.execute("""
                         INSERT INTO attendance (schedule_id, telegram_id, status)
                         VALUES ($1, $2, $3)
-                        ON CONFLICT (schedule_id, telegram_id) WHERE schedule_id IS NOT NULL 
-                        DO UPDATE SET status = EXCLUDED.status
-                    """, data.schedule_id, int(tg_id), status)
+                    """, data.schedule_id, tg_id, status)
     return {"status": "ok"}
 
 @app.get("/api/attendance/calendar_meta")
@@ -1087,17 +1092,21 @@ async def toggle_cell_attendance(data: CellToggleRequest, starosta: dict = Depen
 
         if data.is_override:
             await conn.execute("""
+                DELETE FROM attendance 
+                WHERE override_id = $1 AND telegram_id = $2
+            """, data.schedule_id, data.telegram_id)
+            await conn.execute("""
                 INSERT INTO attendance (override_id, telegram_id, status)
                 VALUES ($1, $2, $3)
-                ON CONFLICT(override_id, telegram_id) WHERE override_id IS NOT NULL 
-                DO UPDATE SET status = EXCLUDED.status
             """, data.schedule_id, data.telegram_id, new_status)
         else:
             await conn.execute("""
+                DELETE FROM attendance 
+                WHERE schedule_id = $1 AND telegram_id = $2
+            """, data.schedule_id, data.telegram_id)
+            await conn.execute("""
                 INSERT INTO attendance (schedule_id, telegram_id, status)
                 VALUES ($1, $2, $3)
-                ON CONFLICT(schedule_id, telegram_id) WHERE schedule_id IS NOT NULL 
-                DO UPDATE SET status = EXCLUDED.status
             """, data.schedule_id, data.telegram_id, new_status)
 
         return {"status": "ok", "new_status": new_status}

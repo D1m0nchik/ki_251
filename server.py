@@ -743,7 +743,7 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
         await conn.execute("UPDATE reminders SET is_active = FALSE WHERE id = $1", reminder_id)
     return {"status": "ok"}
 
-# Змінна часу для 15-хвилинного оновлення пар поточного дня
+# Змінна часу для 15-хвилинного оновлення розкладу поточного дня
 last_quick_sync_time = 0
 
 async def background_reminder_notifier():
@@ -1005,6 +1005,7 @@ async def get_attendance_calendar_meta(
                 FROM attendance a
                 JOIN schedule s ON s.id = a.schedule_id
                 WHERE a.schedule_id IS NOT NULL
+                  AND s.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
                 UNION
@@ -1012,6 +1013,7 @@ async def get_attendance_calendar_meta(
                 FROM attendance a
                 JOIN schedule_overrides ov ON ov.id = a.override_id
                 WHERE a.override_id IS NOT NULL
+                  AND ov.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
             ) combined
@@ -1135,7 +1137,9 @@ def build_matrix_csv(students, lessons, att_dict) -> bytes:
 
     header = ["№", "ПІБ Студента", "Підгр.", "Вибіркова"]
     for l in lessons:
-        header.append(f"{l['date_str'][:5]} ({l['lesson_number']}п)")
+        d_str = l.get('date_str', '')[:5]
+        l_num = l.get('lesson_number', '')
+        header.append(f"{d_str} ({l_num}п)")
     writer.writerow(header)
 
     status_chars = {
@@ -1170,12 +1174,17 @@ async def send_attendance_matrix_to_telegram(
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
+        students = await conn.fetch("""
+            SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group 
+            FROM users 
+            ORDER BY full_name ASC
+        """)
 
         lessons = await conn.fetch(f"""
             SELECT id, date_str, lesson_number, subject, FALSE as is_override
             FROM schedule
-            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+            WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+              AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
               AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
             ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
         """, target_month, target_year)
@@ -1183,7 +1192,8 @@ async def send_attendance_matrix_to_telegram(
         overrides = await conn.fetch(f"""
             SELECT id, date_str, lesson_number, subject, TRUE as is_override, replaces_schedule_ids
             FROM schedule_overrides
-            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+            WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+              AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
               AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
             ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
         """, target_month, target_year)
@@ -1198,15 +1208,26 @@ async def send_attendance_matrix_to_telegram(
 
         combined_lessons = [dict(l) for l in lessons if l["id"] not in replaces_ids]
         combined_lessons.extend(active_ovs)
-        combined_lessons.sort(key=lambda x: (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x["lesson_number"]))
+
+        def safe_sort_key(x):
+            try:
+                return (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0))
+            except Exception:
+                return (datetime.min, 0)
+
+        combined_lessons.sort(key=safe_sort_key)
 
         att_records = await conn.fetch(f"""
             SELECT a.schedule_id, a.override_id, a.telegram_id, a.status
             FROM attendance a
             LEFT JOIN schedule s ON s.id = a.schedule_id
             LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
-            WHERE (s.id IS NOT NULL AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
-               OR (ov.id IS NOT NULL AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+            WHERE (s.id IS NOT NULL AND s.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 
+                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+               OR (ov.id IS NOT NULL AND ov.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 
+                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
         """, target_month, target_year)
 
         att_dict = {}
@@ -1217,15 +1238,19 @@ async def send_attendance_matrix_to_telegram(
                 att_dict[f"sc_{r['schedule_id']}_{r['telegram_id']}"] = r["status"]
 
     csv_bytes = build_matrix_csv(students, combined_lessons, att_dict)
-    filename = f"Відомість_КІ-25-1_{target_month:02d}_{target_year}.csv"
+    filename = f"journal_KI251_{target_month:02d}_{target_year}.csv"
 
     doc = BufferedInputFile(csv_bytes, filename=filename)
-    await bot.send_document(
-        chat_id=tg_id,
-        document=doc,
-        caption=f"📋 <b>Відомість відвідуваності групи КІ-25-1</b>\n📅 Період: <b>{target_month:02d}.{target_year}</b>",
-        parse_mode="HTML"
-    )
+    try:
+        await bot.send_document(
+            chat_id=tg_id,
+            document=doc,
+            caption=f"📋 <b>Відомість відвідуваності групи КІ-25-1</b>\n📅 Період: <b>{target_month:02d}.{target_year}</b>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Помилка відправки відомості ботом у чат {tg_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Помилка надсилання в Telegram: {str(e)}")
 
     return {"status": "ok", "filename": filename}
 
@@ -1246,7 +1271,8 @@ async def export_attendance_matrix_report(
         lessons = await conn.fetch(f"""
             SELECT id, date_str, lesson_number, subject, FALSE as is_override
             FROM schedule
-            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+            WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+              AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
               AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
             ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
         """, target_month, target_year)
@@ -1254,7 +1280,8 @@ async def export_attendance_matrix_report(
         overrides = await conn.fetch(f"""
             SELECT id, date_str, lesson_number, subject, TRUE as is_override, replaces_schedule_ids
             FROM schedule_overrides
-            WHERE EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
+            WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+              AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
               AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
             ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
         """, target_month, target_year)
@@ -1269,15 +1296,26 @@ async def export_attendance_matrix_report(
 
         combined_lessons = [dict(l) for l in lessons if l["id"] not in replaces_ids]
         combined_lessons.extend(active_ovs)
-        combined_lessons.sort(key=lambda x: (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x["lesson_number"]))
+
+        def safe_sort_key(x):
+            try:
+                return (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0))
+            except Exception:
+                return (datetime.min, 0)
+
+        combined_lessons.sort(key=safe_sort_key)
 
         att_records = await conn.fetch(f"""
             SELECT a.schedule_id, a.override_id, a.telegram_id, a.status
             FROM attendance a
             LEFT JOIN schedule s ON s.id = a.schedule_id
             LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
-            WHERE (s.id IS NOT NULL AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
-               OR (ov.id IS NOT NULL AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+            WHERE (s.id IS NOT NULL AND s.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 
+                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+               OR (ov.id IS NOT NULL AND ov.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 
+                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
         """, target_month, target_year)
 
         att_dict = {}

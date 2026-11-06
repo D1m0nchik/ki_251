@@ -214,8 +214,6 @@ async def update_profile(data: ProfileUpdateRequest, current_user: dict = Depend
 # ---------------------------------------------------------------------------
 # Розклад
 # ---------------------------------------------------------------------------
-SQL_DATE_CONVERT = "TO_DATE(SUBSTRING(date_str, 1, 10), 'DD.MM.YYYY')"
-
 @app.get("/api/schedule/meta")
 async def get_schedule_meta(current_user: dict = Depends(get_current_user)):
     pool = await get_db_pool()
@@ -296,21 +294,21 @@ async def get_schedule(
     async with pool.acquire() as conn:
         if original:
             if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
-                query = f"""
+                query = """
                     SELECT * FROM schedule 
-                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                      AND {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
-                      AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
-                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                    WHERE LENGTH(date_str) >= 10
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= TO_DATE($1, 'DD.MM.YYYY')
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= TO_DATE($2, 'DD.MM.YYYY')
+                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
                 """
                 base_rows = await conn.fetch(query, sdate.strip()[:10], edate.strip()[:10])
             else:
-                query = f"""
+                query = """
                     SELECT * FROM schedule 
-                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                      AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                      AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
-                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                    WHERE LENGTH(date_str) >= 10
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
+                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
                 """
                 base_rows = await conn.fetch(query)
 
@@ -320,59 +318,59 @@ async def get_schedule(
             s_clean = sdate.strip()[:10]
             e_clean = edate.strip()[:10]
             if role == "starosta":
-                query = f"""
+                query = """
                     SELECT * FROM schedule 
-                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                      AND {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
-                      AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
-                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                    WHERE LENGTH(date_str) >= 10
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= TO_DATE($1, 'DD.MM.YYYY')
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= TO_DATE($2, 'DD.MM.YYYY')
+                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
                 """
                 base_rows = await conn.fetch(query, s_clean, e_clean)
             else:
-                query = f"""
+                query = """
                     SELECT * FROM schedule 
-                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                    WHERE LENGTH(date_str) >= 10
                       AND target_subgroup IN (0, $1)
                       AND (COALESCE(elective_num, 0) = 0 OR $2 = 0 OR elective_num = $2)
-                      AND {SQL_DATE_CONVERT} >= TO_DATE($3, 'DD.MM.YYYY')
-                      AND {SQL_DATE_CONVERT} <= TO_DATE($4, 'DD.MM.YYYY')
-                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= TO_DATE($3, 'DD.MM.YYYY')
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= TO_DATE($4, 'DD.MM.YYYY')
+                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
                 """
                 base_rows = await conn.fetch(query, subgroup, user_elective, s_clean, e_clean)
 
-            overrides = await conn.fetch(f"""
+            overrides = await conn.fetch("""
                 SELECT * FROM schedule_overrides
-                WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                  AND {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
-                  AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
+                WHERE LENGTH(date_str) >= 10
+                  AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= TO_DATE($1, 'DD.MM.YYYY')
+                  AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= TO_DATE($2, 'DD.MM.YYYY')
             """, s_clean, e_clean)
         else:
             if role == "starosta":
-                query = f"""
+                query = """
                     SELECT * FROM schedule 
-                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                      AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                      AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
-                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                    WHERE LENGTH(date_str) >= 10
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
+                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
                 """
                 base_rows = await conn.fetch(query)
             else:
-                query = f"""
+                query = """
                     SELECT * FROM schedule 
-                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                    WHERE LENGTH(date_str) >= 10
                       AND target_subgroup IN (0, $1)
                       AND (COALESCE(elective_num, 0) = 0 OR $2 = 0 OR elective_num = $2)
-                      AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                      AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
-                    ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
+                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
                 """
                 base_rows = await conn.fetch(query, subgroup, user_elective)
 
-            overrides = await conn.fetch(f"""
+            overrides = await conn.fetch("""
                 SELECT * FROM schedule_overrides
-                WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                  AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                  AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
+                WHERE LENGTH(date_str) >= 10
+                  AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                  AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
             """)
 
         replaced_ids = set()
@@ -396,9 +394,10 @@ async def get_schedule(
 
         def parse_lesson_sort(x):
             try:
-                return (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0))
+                d = x.get("date_str", "")[:10]
+                return (int(d[6:10]), int(d[3:5]), int(d[0:2]), int(x.get("lesson_number", 0)))
             except Exception:
-                return (datetime.min, 0)
+                return (0, 0, 0, 0)
 
         final_lessons.sort(key=parse_lesson_sort)
         return final_lessons
@@ -754,7 +753,7 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Фоновий моніторинг (кожні 60 секунд перевіряє дедлайни та розклад на сьогодні)
+# Фоновий моніторинг (кожні 60 секунд)
 # ---------------------------------------------------------------------------
 async def background_reminder_notifier():
     while True:
@@ -1002,28 +1001,31 @@ async def get_attendance_calendar_meta(
     month: int = Query(..., ge=1, le=12),
     starosta: dict = Depends(require_starosta)
 ):
+    target_year = str(year)
+    target_month = f"{int(month):02d}"
+
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(f"""
-            SELECT DISTINCT EXTRACT(DAY FROM {SQL_DATE_CONVERT})::int as day_num
+        rows = await conn.fetch("""
+            SELECT DISTINCT SUBSTRING(date_str, 1, 2)::int as day_num
             FROM (
                 SELECT s.date_str
                 FROM attendance a
                 JOIN schedule s ON s.id = a.schedule_id
                 WHERE a.schedule_id IS NOT NULL
-                  AND s.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                  AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
-                  AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+                  AND LENGTH(s.date_str) >= 10
+                  AND SUBSTRING(s.date_str, 4, 2) = $1
+                  AND SUBSTRING(s.date_str, 7, 4) = $2
                 UNION
                 SELECT ov.date_str
                 FROM attendance a
                 JOIN schedule_overrides ov ON ov.id = a.override_id
                 WHERE a.override_id IS NOT NULL
-                  AND ov.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                  AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
-                  AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
+                  AND LENGTH(ov.date_str) >= 10
+                  AND SUBSTRING(ov.date_str, 4, 2) = $1
+                  AND SUBSTRING(ov.date_str, 7, 4) = $2
             ) combined
-        """, month, year)
+        """, target_month, target_year)
 
         marked_days = [r["day_num"] for r in rows if r["day_num"] is not None]
         return {"year": year, "month": month, "marked_days": marked_days}
@@ -1175,8 +1177,8 @@ async def send_attendance_matrix_to_telegram(
 ):
     tg_id = starosta["telegram_id"]
     now = datetime.now()
-    target_year = year or now.year
-    target_month = month or now.month
+    target_year = str(year or now.year)
+    target_month = f"{int(month or now.month):02d}"
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -1186,22 +1188,22 @@ async def send_attendance_matrix_to_telegram(
             ORDER BY full_name ASC
         """)
 
-        lessons = await conn.fetch(f"""
+        lessons = await conn.fetch("""
             SELECT id, date_str, lesson_number, subject, FALSE as is_override
             FROM schedule
-            WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-              AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
-              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
-            ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+            WHERE LENGTH(date_str) >= 10
+              AND SUBSTRING(date_str, 4, 2) = $1
+              AND SUBSTRING(date_str, 7, 4) = $2
+            ORDER BY SUBSTRING(date_str, 1, 2) ASC, lesson_number ASC
         """, target_month, target_year)
 
-        overrides = await conn.fetch(f"""
+        overrides = await conn.fetch("""
             SELECT id, date_str, lesson_number, subject, TRUE as is_override, replaces_schedule_ids
             FROM schedule_overrides
-            WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-              AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
-              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
-            ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+            WHERE LENGTH(date_str) >= 10
+              AND SUBSTRING(date_str, 4, 2) = $1
+              AND SUBSTRING(date_str, 7, 4) = $2
+            ORDER BY SUBSTRING(date_str, 1, 2) ASC, lesson_number ASC
         """, target_month, target_year)
 
         replaces_ids = set()
@@ -1217,23 +1219,20 @@ async def send_attendance_matrix_to_telegram(
 
         def safe_sort_key(x):
             try:
-                return (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0))
+                d = x.get("date_str", "")[:10]
+                return (int(d[6:10]), int(d[3:5]), int(d[0:2]), int(x.get("lesson_number", 0)))
             except Exception:
-                return (datetime.min, 0)
+                return (0, 0, 0, 0)
 
         combined_lessons.sort(key=safe_sort_key)
 
-        att_records = await conn.fetch(f"""
+        att_records = await conn.fetch("""
             SELECT a.schedule_id, a.override_id, a.telegram_id, a.status
             FROM attendance a
             LEFT JOIN schedule s ON s.id = a.schedule_id
             LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
-            WHERE (s.id IS NOT NULL AND s.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 
-                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
-               OR (ov.id IS NOT NULL AND ov.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 
-                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+            WHERE (s.id IS NOT NULL AND LENGTH(s.date_str) >= 10 AND SUBSTRING(s.date_str, 4, 2) = $1 AND SUBSTRING(s.date_str, 7, 4) = $2)
+               OR (ov.id IS NOT NULL AND LENGTH(ov.date_str) >= 10 AND SUBSTRING(ov.date_str, 4, 2) = $1 AND SUBSTRING(ov.date_str, 7, 4) = $2)
         """, target_month, target_year)
 
         att_dict = {}
@@ -1244,14 +1243,14 @@ async def send_attendance_matrix_to_telegram(
                 att_dict[f"sc_{r['schedule_id']}_{r['telegram_id']}"] = r["status"]
 
     csv_bytes = build_matrix_csv(students, combined_lessons, att_dict)
-    filename = f"journal_KI251_{target_month:02d}_{target_year}.csv"
+    filename = f"journal_KI251_{target_month}_{target_year}.csv"
 
     doc = BufferedInputFile(csv_bytes, filename=filename)
     try:
         await bot.send_document(
             chat_id=tg_id,
             document=doc,
-            caption=f"📋 <b>Відомість відвідуваності групи КІ-25-1</b>\n📅 Період: <b>{target_month:02d}.{target_year}</b>",
+            caption=f"📋 <b>Відомість відвідуваності групи КІ-25-1</b>\n📅 Період: <b>{target_month}.{target_year}</b>",
             parse_mode="HTML"
         )
     except Exception as e:
@@ -1267,29 +1266,29 @@ async def export_attendance_matrix_report(
     starosta: dict = Depends(require_starosta)
 ):
     now = datetime.now()
-    target_year = year or now.year
-    target_month = month or now.month
+    target_year = str(year or now.year)
+    target_month = f"{int(month or now.month):02d}"
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         students = await conn.fetch("SELECT telegram_id, full_name, subgroup, COALESCE(elective_group, 0) as elective_group FROM users ORDER BY full_name ASC")
 
-        lessons = await conn.fetch(f"""
+        lessons = await conn.fetch("""
             SELECT id, date_str, lesson_number, subject, FALSE as is_override
             FROM schedule
-            WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-              AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
-              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
-            ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+            WHERE LENGTH(date_str) >= 10
+              AND SUBSTRING(date_str, 4, 2) = $1
+              AND SUBSTRING(date_str, 7, 4) = $2
+            ORDER BY SUBSTRING(date_str, 1, 2) ASC, lesson_number ASC
         """, target_month, target_year)
 
-        overrides = await conn.fetch(f"""
+        overrides = await conn.fetch("""
             SELECT id, date_str, lesson_number, subject, TRUE as is_override, replaces_schedule_ids
             FROM schedule_overrides
-            WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-              AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1
-              AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2
-            ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
+            WHERE LENGTH(date_str) >= 10
+              AND SUBSTRING(date_str, 4, 2) = $1
+              AND SUBSTRING(date_str, 7, 4) = $2
+            ORDER BY SUBSTRING(date_str, 1, 2) ASC, lesson_number ASC
         """, target_month, target_year)
 
         replaces_ids = set()
@@ -1305,23 +1304,20 @@ async def export_attendance_matrix_report(
 
         def safe_sort_key(x):
             try:
-                return (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0))
+                d = x.get("date_str", "")[:10]
+                return (int(d[6:10]), int(d[3:5]), int(d[0:2]), int(x.get("lesson_number", 0)))
             except Exception:
-                return (datetime.min, 0)
+                return (0, 0, 0, 0)
 
         combined_lessons.sort(key=safe_sort_key)
 
-        att_records = await conn.fetch(f"""
+        att_records = await conn.fetch("""
             SELECT a.schedule_id, a.override_id, a.telegram_id, a.status
             FROM attendance a
             LEFT JOIN schedule s ON s.id = a.schedule_id
             LEFT JOIN schedule_overrides ov ON ov.id = a.override_id
-            WHERE (s.id IS NOT NULL AND s.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 
-                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
-               OR (ov.id IS NOT NULL AND ov.date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
-                   AND EXTRACT(MONTH FROM {SQL_DATE_CONVERT}) = $1 
-                   AND EXTRACT(YEAR FROM {SQL_DATE_CONVERT}) = $2)
+            WHERE (s.id IS NOT NULL AND LENGTH(s.date_str) >= 10 AND SUBSTRING(s.date_str, 4, 2) = $1 AND SUBSTRING(s.date_str, 7, 4) = $2)
+               OR (ov.id IS NOT NULL AND LENGTH(ov.date_str) >= 10 AND SUBSTRING(ov.date_str, 4, 2) = $1 AND SUBSTRING(ov.date_str, 7, 4) = $2)
         """, target_month, target_year)
 
         att_dict = {}
@@ -1332,7 +1328,7 @@ async def export_attendance_matrix_report(
                 att_dict[f"sc_{r['schedule_id']}_{r['telegram_id']}"] = r["status"]
 
     csv_bytes = build_matrix_csv(students, combined_lessons, att_dict)
-    filename = f"journal_KI251_{target_month:02d}_{target_year}.csv"
+    filename = f"journal_KI251_{target_month}_{target_year}.csv"
     return Response(
         content=csv_bytes,
         media_type="text/csv",

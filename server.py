@@ -79,8 +79,8 @@ class InMemoryRateLimiter:
             valid_timestamps.append(now)
             self.records[key] = valid_timestamps
 
-sync_month_limiter = InMemoryRateLimiter(requests_limit=2, time_window_seconds=60)
-fetch_range_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
+sync_month_limiter = InMemoryRateLimiter(requests_limit=4, time_window_seconds=60)
+fetch_range_limiter = InMemoryRateLimiter(requests_limit=6, time_window_seconds=60)
 broadcast_limiter = InMemoryRateLimiter(requests_limit=3, time_window_seconds=60)
 poll_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
 reminder_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
@@ -743,10 +743,27 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
         await conn.execute("UPDATE reminders SET is_active = FALSE WHERE id = $1", reminder_id)
     return {"status": "ok"}
 
+# Змінна часу для 15-хвилинного оновлення пар поточного дня
+last_quick_sync_time = 0
+
 async def background_reminder_notifier():
+    global last_quick_sync_time
     while True:
         try:
             await asyncio.sleep(60)
+            now_time = time.monotonic()
+            now_kyiv = datetime.now(KYIV_TZ)
+
+            # Автоматичний фоновий скрапінг поточного дня раз на 15 хв у робочі години (08:00 - 18:00)
+            if now_kyiv.weekday() < 5 and 8 <= now_kyiv.hour <= 18:
+                if now_time - last_quick_sync_time > 900:
+                    try:
+                        today_str = now_kyiv.strftime("%d.%m.%Y")
+                        await fetch_and_save_schedule(sdate=today_str, edate=today_str)
+                        last_quick_sync_time = now_time
+                    except Exception as parse_err:
+                        print("Помилка фонового автооновлення поточного дня:", parse_err)
+
             pool = await get_db_pool()
             if not pool:
                 continue
@@ -895,7 +912,7 @@ async def change_student_elective(data: ChangeElectiveRequest, starosta: dict = 
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Журнал та відвідуваність (надійне збереження без конфлікту індексів)
+# Журнал та відвідуваність
 # ---------------------------------------------------------------------------
 @app.get("/api/attendance/students")
 async def get_students_for_lesson(

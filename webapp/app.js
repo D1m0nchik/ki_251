@@ -17,7 +17,7 @@ let activeSearchRange = null;
 let showOriginalSchedule = false;
 
 let calCurrentYear = 2026;
-let calCurrentMonth = 10;
+let calCurrentMonth = 11;
 let calMarkedDays = [];
 let activeMatrixDateStr = null;
 
@@ -816,7 +816,9 @@ async function saveAttendance() {
     await apiRequest("/api/attendance/save", "POST", payload);
     closeAttendanceModal();
     
-    if (tg && tg.showPopup) {
+    if (tg && tg.showAlert) {
+      tg.showAlert("Журнал пари успішно збережено!");
+    } else if (tg && tg.showPopup) {
       tg.showPopup({ message: "Журнал пари успішно збережено!" });
     } else {
       alert("Журнал пари успішно збережено!");
@@ -1069,20 +1071,34 @@ async function onMatrixCellClick(scheduleId, tgId, isOverride, btn) {
 }
 
 async function downloadMatrixReport() {
+  const btn = document.querySelector("button[onclick='downloadMatrixReport()']");
+  const oldText = btn ? btn.innerHTML : "📥 Відомість";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = "⏳ Формуємо...";
+  }
+
   try {
-    if (tg && tg.showPopup) {
-      tg.showPopup({ message: "Формуємо відомість та надсилаємо у чат із ботом..." });
-    }
-    
     const res = await apiRequest(`/api/attendance/send_to_telegram?month=${calCurrentMonth}&year=${calCurrentYear}`, "POST");
     
-    if (tg && tg.showPopup) {
-      tg.showPopup({ message: `✅ Відомість надіслано в чат із ботом!\nФайл: ${res.filename}` });
+    const successMsg = `✅ Відомість успішно сформовано та надіслано в чат бота!\nФайл: ${res.filename}`;
+    if (tg && tg.showAlert) {
+      tg.showAlert(successMsg);
     } else {
-      alert("Файл надіслано в чат бота!");
+      alert(successMsg);
     }
   } catch (err) {
-    alert("Помилка формування відомості: " + err.message);
+    const errorMsg = "Помилка формування відомості: " + err.message;
+    if (tg && tg.showAlert) {
+      tg.showAlert(errorMsg);
+    } else {
+      alert(errorMsg);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = oldText;
+    }
   }
 }
 
@@ -1206,7 +1222,9 @@ async function saveOverride() {
 
     closeOverrideModal();
     await loadSchedule();
-    if (tg && tg.showPopup) {
+    if (tg && tg.showAlert) {
+      tg.showAlert("Пріоритетну пару збережено!");
+    } else if (tg && tg.showPopup) {
       tg.showPopup({ message: "Пріоритетну пару збережено!" });
     }
   } catch (e) {
@@ -1307,11 +1325,11 @@ async function toggleReminderComplete(reminderId) {
   try {
     const res = await apiRequest(`/api/reminders/complete?reminder_id=${reminderId}`, "POST");
     await loadActiveReminders();
-    if (tg && tg.showPopup) {
+    if (tg && tg.showAlert) {
       const msg = res.completed 
         ? "Супер! Ви відмітили завдання як виконане. Нагадування вимкнено!" 
         : "Позначку знято. Нагадування відновлено.";
-      tg.showPopup({ message: msg });
+      tg.showAlert(msg);
     }
   } catch (e) {
     alert("Помилка: " + e.message);
@@ -1361,8 +1379,8 @@ async function saveReminder() {
     document.getElementById("rem-deadline").value = "";
 
     await loadActiveReminders();
-    if (tg && tg.showPopup) {
-      tg.showPopup({ message: "Дедлайн успішно створено та надіслано в групу!" });
+    if (tg && tg.showAlert) {
+      tg.showAlert("Дедлайн успішно створено та надіслано в групу!");
     } else {
       alert("Дедлайн створено!");
     }

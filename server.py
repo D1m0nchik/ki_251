@@ -298,7 +298,8 @@ async def get_schedule(
             if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
                 query = f"""
                     SELECT * FROM schedule 
-                    WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
+                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                      AND {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
                       AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
@@ -306,7 +307,8 @@ async def get_schedule(
             else:
                 query = f"""
                     SELECT * FROM schedule 
-                    WHERE {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                      AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
                       AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
@@ -320,7 +322,8 @@ async def get_schedule(
             if role == "starosta":
                 query = f"""
                     SELECT * FROM schedule 
-                    WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
+                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                      AND {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
                       AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
@@ -328,7 +331,8 @@ async def get_schedule(
             else:
                 query = f"""
                     SELECT * FROM schedule 
-                    WHERE target_subgroup IN (0, $1)
+                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                      AND target_subgroup IN (0, $1)
                       AND (COALESCE(elective_num, 0) = 0 OR $2 = 0 OR elective_num = $2)
                       AND {SQL_DATE_CONVERT} >= TO_DATE($3, 'DD.MM.YYYY')
                       AND {SQL_DATE_CONVERT} <= TO_DATE($4, 'DD.MM.YYYY')
@@ -338,14 +342,16 @@ async def get_schedule(
 
             overrides = await conn.fetch(f"""
                 SELECT * FROM schedule_overrides
-                WHERE {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
+                WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                  AND {SQL_DATE_CONVERT} >= TO_DATE($1, 'DD.MM.YYYY')
                   AND {SQL_DATE_CONVERT} <= TO_DATE($2, 'DD.MM.YYYY')
             """, s_clean, e_clean)
         else:
             if role == "starosta":
                 query = f"""
                     SELECT * FROM schedule 
-                    WHERE {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                      AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
                       AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
                     ORDER BY {SQL_DATE_CONVERT} ASC, lesson_number ASC
                 """
@@ -353,7 +359,8 @@ async def get_schedule(
             else:
                 query = f"""
                     SELECT * FROM schedule 
-                    WHERE target_subgroup IN (0, $1)
+                    WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                      AND target_subgroup IN (0, $1)
                       AND (COALESCE(elective_num, 0) = 0 OR $2 = 0 OR elective_num = $2)
                       AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
                       AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
@@ -363,7 +370,8 @@ async def get_schedule(
 
             overrides = await conn.fetch(f"""
                 SELECT * FROM schedule_overrides
-                WHERE {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+                WHERE date_str ~ '^[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{4}}'
+                  AND {SQL_DATE_CONVERT} >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
                   AND {SQL_DATE_CONVERT} <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
             """)
 
@@ -386,11 +394,13 @@ async def get_schedule(
         final_lessons = [dict(r) for r in base_rows if r["id"] not in replaced_ids]
         final_lessons.extend(active_overrides)
 
-        final_lessons.sort(key=lambda x: (
-            datetime.strptime(x["date_str"][:10], "%d.%m.%Y"),
-            x["lesson_number"]
-        ))
+        def parse_lesson_sort(x):
+            try:
+                return (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0))
+            except Exception:
+                return (datetime.min, 0)
 
+        final_lessons.sort(key=parse_lesson_sort)
         return final_lessons
 
 class DateRangeRequest(BaseModel):
@@ -743,26 +753,22 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
         await conn.execute("UPDATE reminders SET is_active = FALSE WHERE id = $1", reminder_id)
     return {"status": "ok"}
 
-# Змінна часу для 15-хвилинного оновлення розкладу поточного дня
-last_quick_sync_time = 0
-
+# ---------------------------------------------------------------------------
+# Фоновий моніторинг (кожні 60 секунд перевіряє дедлайни та розклад на сьогодні)
+# ---------------------------------------------------------------------------
 async def background_reminder_notifier():
-    global last_quick_sync_time
     while True:
         try:
             await asyncio.sleep(60)
-            now_time = time.monotonic()
             now_kyiv = datetime.now(KYIV_TZ)
 
-            # Автоматичний фоновий скрапінг поточного дня раз на 15 хв у робочі години (08:00 - 18:00)
+            # Швидка перевірка поточного дня в робочий час (будні 08:00 - 18:00)
             if now_kyiv.weekday() < 5 and 8 <= now_kyiv.hour <= 18:
-                if now_time - last_quick_sync_time > 900:
-                    try:
-                        today_str = now_kyiv.strftime("%d.%m.%Y")
-                        await fetch_and_save_schedule(sdate=today_str, edate=today_str)
-                        last_quick_sync_time = now_time
-                    except Exception as parse_err:
-                        print("Помилка фонового автооновлення поточного дня:", parse_err)
+                try:
+                    today_str = now_kyiv.strftime("%d.%m.%Y")
+                    await fetch_and_save_schedule(sdate=today_str, edate=today_str)
+                except Exception as parse_err:
+                    print("Помилка щохвилинного автооновлення дня:", parse_err)
 
             pool = await get_db_pool()
             if not pool:

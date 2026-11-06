@@ -190,6 +190,39 @@ def parse_to_utc(dt_str: str) -> datetime:
     return dt_kyiv.astimezone(timezone.utc)
 
 # ---------------------------------------------------------------------------
+# Допоміжна функція: перевірка вікна початку пари
+# ---------------------------------------------------------------------------
+def is_within_lesson_window(lessons: list, now: datetime, window_minutes: int = 10):
+    """
+    Перевіряє, чи поточний час потрапляє у вікно [time_start - window, time_start + window]
+    хоча б для однієї пари зі списку.
+    Повертає кортеж: (bool_чи_потрапляє, match_info_dict_або_None).
+    """
+    for l in lessons:
+        raw_start = l.get("time_start")
+        if not raw_start or not isinstance(raw_start, str):
+            continue
+        try:
+            parts = raw_start.strip().split(":")
+            if len(parts) != 2:
+                continue
+            h, m = int(parts[0]), int(parts[1])
+            lesson_start_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            window_delta = timedelta(minutes=window_minutes)
+            
+            if (lesson_start_dt - window_delta) <= now <= (lesson_start_dt + window_delta):
+                return True, {
+                    "lesson_number": l.get("lesson_number", "?"),
+                    "time_start": raw_start.strip(),
+                    "subject": l.get("subject", "Заняття")
+                }
+        except Exception:
+            # Якщо час конкретної пари пошкоджено — пропускаємо її та йдемо далі
+            continue
+
+    return False, None
+
+# ---------------------------------------------------------------------------
 # Ендпоінти профілю
 # ---------------------------------------------------------------------------
 @app.get("/api/user_data")
@@ -753,26 +786,56 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Фоновий моніторинг (кожні 60 секунд)
+# Фоновий моніторинг (розумний скрапінг пар поточного дня + нагадування)
 # ---------------------------------------------------------------------------
 async def background_reminder_notifier():
     while True:
         try:
             await asyncio.sleep(60)
             now_kyiv = datetime.now(KYIV_TZ)
-
-            # Швидка перевірка поточного дня в робочий час (будні 08:00 - 18:00)
-            if now_kyiv.weekday() < 5 and 8 <= now_kyiv.hour <= 18:
-                try:
-                    today_str = now_kyiv.strftime("%d.%m.%Y")
-                    await fetch_and_save_schedule(sdate=today_str, edate=today_str)
-                except Exception as parse_err:
-                    print("Помилка щохвилинного автооновлення дня:", parse_err)
+            today_str = now_kyiv.strftime("%d.%m.%Y")
 
             pool = await get_db_pool()
             if not pool:
                 continue
 
+            # 1. Розумне фонове оновлення розкладу поточного дня
+            if now_kyiv.weekday() < 5 and 8 <= now_kyiv.hour <= 18:
+                try:
+                    async with pool.acquire() as conn:
+                        today_schedule = await conn.fetch("""
+                            SELECT id, lesson_number, time_start, subject 
+                            FROM schedule 
+                            WHERE SUBSTRING(date_str, 1, 10) = $1
+                        """, today_str)
+
+                        today_overrides = await conn.fetch("""
+                            SELECT id, lesson_number, time_start, subject, replaces_schedule_ids 
+                            FROM schedule_overrides 
+                            WHERE SUBSTRING(date_str, 1, 10) = $1
+                        """, today_str)
+
+                        replaced_ids = set()
+                        for ov in today_overrides:
+                            if ov["replaces_schedule_ids"]:
+                                replaced_ids.update(ov["replaces_schedule_ids"])
+
+                        active_today = [dict(s) for s in today_schedule if s["id"] not in replaced_ids]
+                        active_today.extend([dict(ov) for ov in today_overrides])
+
+                    if not active_today:
+                        print(f"[{now_kyiv.strftime('%H:%M:%S')}] Скрапінг пропущено: на сьогодні ({today_str}) пар немає.")
+                    else:
+                        in_window, match = is_within_lesson_window(active_today, now_kyiv, window_minutes=10)
+                        if in_window:
+                            print(f"[{now_kyiv.strftime('%H:%M:%S')}] Скрапінг запущено: вікно {match['lesson_number']} пари ({match['time_start']}) — «{match['subject']}».")
+                            await fetch_and_save_schedule(sdate=today_str, edate=today_str)
+                        else:
+                            print(f"[{now_kyiv.strftime('%H:%M:%S')}] Скрапінг пропущено: не час (немає пар у вікні ±10 хв).")
+                except Exception as smart_parse_err:
+                    print("Помилка розумного скрапінгу дня:", smart_parse_err)
+
+            # 2. Обробка прострочених опитувань та нагадувань дедлайнів
             async with pool.acquire() as conn:
                 expired_polls = await conn.fetch("SELECT id, question FROM polls WHERE is_active = TRUE AND deadline_at <= NOW()")
                 for ep in expired_polls:

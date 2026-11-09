@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from database import get_db_pool
 
-GROUP_ID = 2658  # ID групи КІ-25-1 в системі ІФНТУНГ
+GROUP_ID = 2658  # ID групи КІ-25-1 в системі розкладу ІФНТУНГ
 BASE_URL = "https://online.nung.edu.ua/schedule/view"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
@@ -34,15 +34,10 @@ def clean_text_segment(text: str) -> str:
     if not text:
         return ""
     t = text.replace('\xa0', ' ').replace('\u200b', ' ')
-    # Нормалізуємо всі можливі види апострофів до класичного
     t = t.replace('`', "'").replace('’', "'").replace('ʼ', "'")
     return re.sub(r'\s+', ' ', t).strip()
 
 async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
-    """
-    Завантажує та розбирає розклад з сайту ІФНТУНГ з точним виділенням
-    назви дисципліни, викладача, типу пари та аудиторії.
-    """
     if not sdate or not edate:
         now_dt = datetime.now(KYIV_TZ)
         sdate = now_dt.strftime("%d.%m.%Y")
@@ -65,7 +60,7 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
                     return False
                 html = await response.text()
     except Exception as e:
-        print("Помилка з'єднання з сайтом ІФНТУНГ:", e)
+        print("Помилка підключення до сайту ІФНТУНГ:", e)
         return False
 
     soup = BeautifulSoup(html, "html.parser")
@@ -95,7 +90,6 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
 
     parsed_lessons = []
 
-    # Регулярні вирази
     room_regex = re.compile(r'(\d+[\.\-][А-Яа-яA-Za-z0-9]+(?:\.ауд|\s*ауд)?\.?|дистанційно|онлайн)', re.I)
     teacher_regex = re.compile(
         r'(?:доцент|професор|асистент|викладач|ст\.?\s*викладач|ст\.?\s*викл\.?|доц\.|проф\.|ас\.)\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+(?:\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+)?',
@@ -130,7 +124,6 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
         if not item_date:
             continue
 
-        # 1. Посилання (Meet, Zoom, Moodle)
         meet_url = ""
         for a in item.find_all("a", href=True):
             f_meet = extract_meet_url(a['href'])
@@ -142,15 +135,12 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
             meet_url = extract_meet_url(raw_text)
 
         working = raw_text
-
-        # 2. Очищення від дати і номера пари
         working = re.sub(r'^[1-7]\s*(?:пара|п\.|\))\s*', '', working)
         if item_date:
             working = working.replace(item_date, '')
         if item_dow:
             working = working.replace(item_dow, '')
 
-        # 3. Аудиторія
         room = ""
         r_m = room_regex.search(working)
         if r_m:
@@ -164,24 +154,20 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
         elif meet_url:
             room = "Онлайн (Google Meet)"
 
-        # 4. Викладач (з підтримкою апострофів у Мар'ян тощо)
         teacher = ""
         t_m = teacher_regex.search(working)
         if t_m:
             teacher = clean_text_segment(t_m.group(0))
             working = working[:t_m.start()] + " " + working[t_m.end():]
 
-        # 5. Потік / Збірна група (вирізаємо повністю)
         working = stream_regex.sub('', working)
 
-        # 6. Підгрупа
         target_sg = 0
         sg_m = subgroup_regex.search(working)
         if sg_m:
             target_sg = int(sg_m.group(1))
             working = subgroup_regex.sub('', working)
 
-        # 7. Тип заняття (Лек, Лаб, Пр)
         lesson_type = "Лек"
         tp_m = type_regex.search(working)
         if tp_m:
@@ -199,14 +185,12 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
             elif "пр" in working.lower() or "практ" in working.lower():
                 lesson_type = "Пр"
 
-        # 8. Вибіркова дисципліна
         elective_num = 0
         if "вибіркова 2" in raw_text.lower() or "вибіркова №2" in raw_text.lower():
             elective_num = 2
         elif "вибіркова 1" in raw_text.lower() or "вибіркова №1" in raw_text.lower() or working.strip().startswith("*"):
             elective_num = 1
 
-        # 9. Чиста назва дисципліни
         subject = clean_text_segment(working)
         subject = re.sub(r'https?://[^\s<>"]+', '', subject)
         subject = re.sub(r'\(\s*(?:Лек|Л|Лаб|Пр|Сем)\s*\)', '', subject, flags=re.I)
@@ -238,21 +222,37 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
     async with pool.acquire() as conn:
         async with conn.transaction():
             for l in parsed_lessons:
-                await conn.execute("""
-                    INSERT INTO schedule (
-                        date_str, day_of_week, lesson_number, time_start, time_end,
-                        subject, lesson_type, teacher, room, target_subgroup, meet_url, elective_num
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    ON CONFLICT (date_str, lesson_number, target_subgroup, COALESCE(elective_num, 0))
-                    DO UPDATE SET 
-                        room = CASE WHEN EXCLUDED.room != '' THEN EXCLUDED.room ELSE schedule.room END,
-                        teacher = CASE WHEN EXCLUDED.teacher != '' THEN EXCLUDED.teacher ELSE schedule.teacher END,
-                        meet_url = CASE WHEN EXCLUDED.meet_url != '' THEN EXCLUDED.meet_url ELSE schedule.meet_url END,
-                        subject = EXCLUDED.subject,
-                        lesson_type = EXCLUDED.lesson_type
-                """, l["date_str"], l["day_of_week"], l["lesson_number"], l["time_start"], l["time_end"],
-                     l["subject"], l["lesson_type"], l["teacher"], l["room"], l["target_subgroup"],
-                     l["meet_url"], l["elective_num"])
+                existing_id = await conn.fetchval("""
+                    SELECT id FROM schedule 
+                    WHERE date_str = $1 
+                      AND lesson_number = $2 
+                      AND target_subgroup = $3 
+                      AND COALESCE(elective_num, 0) = $4
+                """, l["date_str"], l["lesson_number"], l["target_subgroup"], l["elective_num"] or 0)
 
-    print(f"[{datetime.now(KYIV_TZ).strftime('%H:%M:%S')}] Успішно оновлено {len(parsed_lessons)} занять з сайту ІФНТУНГ.")
+                if existing_id:
+                    await conn.execute("""
+                        UPDATE schedule SET
+                            subject = $1,
+                            lesson_type = $2,
+                            teacher = CASE WHEN $3 != '' THEN $3 ELSE teacher END,
+                            room = CASE WHEN $4 != '' THEN $4 ELSE room END,
+                            meet_url = CASE WHEN $5 != '' THEN $5 ELSE meet_url END,
+                            day_of_week = $6,
+                            time_start = $7,
+                            time_end = $8
+                        WHERE id = $9
+                    """, l["subject"], l["lesson_type"], l["teacher"], l["room"], l["meet_url"],
+                         l["day_of_week"], l["time_start"], l["time_end"], existing_id)
+                else:
+                    await conn.execute("""
+                        INSERT INTO schedule (
+                            date_str, day_of_week, lesson_number, time_start, time_end,
+                            subject, lesson_type, teacher, room, target_subgroup, meet_url, elective_num
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    """, l["date_str"], l["day_of_week"], l["lesson_number"], l["time_start"], l["time_end"],
+                         l["subject"], l["lesson_type"], l["teacher"], l["room"], l["target_subgroup"],
+                         l["meet_url"], l["elective_num"])
+
+    print(f"[{datetime.now(KYIV_TZ).strftime('%H:%M:%S')}] Оновлено {len(parsed_lessons)} занять.")
     return True

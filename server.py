@@ -56,7 +56,7 @@ LESSON_TIMES = {
 }
 
 # ---------------------------------------------------------------------------
-# Rate Limiting
+# Rate Limiting (підвищено до 60 запитів на хвилину, щоб не блокувати додаток)
 # ---------------------------------------------------------------------------
 class InMemoryRateLimiter:
     def __init__(self, requests_limit: int, time_window_seconds: int):
@@ -79,11 +79,11 @@ class InMemoryRateLimiter:
             valid_timestamps.append(now)
             self.records[key] = valid_timestamps
 
-sync_month_limiter = InMemoryRateLimiter(requests_limit=4, time_window_seconds=60)
-fetch_range_limiter = InMemoryRateLimiter(requests_limit=6, time_window_seconds=60)
-broadcast_limiter = InMemoryRateLimiter(requests_limit=3, time_window_seconds=60)
-poll_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
-reminder_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
+sync_month_limiter = InMemoryRateLimiter(requests_limit=60, time_window_seconds=60)
+fetch_range_limiter = InMemoryRateLimiter(requests_limit=60, time_window_seconds=60)
+broadcast_limiter = InMemoryRateLimiter(requests_limit=10, time_window_seconds=60)
+poll_create_limiter = InMemoryRateLimiter(requests_limit=10, time_window_seconds=60)
+reminder_create_limiter = InMemoryRateLimiter(requests_limit=10, time_window_seconds=60)
 
 # ---------------------------------------------------------------------------
 # Авторизація Telegram initData
@@ -325,7 +325,7 @@ async def get_schedule(
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         if original:
-            rows = await conn.fetch("SELECT * FROM schedule WHERE date_str ~ '^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}'")
+            rows = await conn.fetch("SELECT * FROM schedule WHERE LENGTH(date_str) >= 10")
             filtered = []
             for r in rows:
                 try:
@@ -337,8 +337,8 @@ async def get_schedule(
             filtered.sort(key=lambda x: (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0)))
             return filtered
 
-        base_rows = await conn.fetch("SELECT * FROM schedule WHERE date_str ~ '^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}'")
-        overrides_rows = await conn.fetch("SELECT * FROM schedule_overrides WHERE date_str ~ '^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}'")
+        base_rows = await conn.fetch("SELECT * FROM schedule WHERE LENGTH(date_str) >= 10")
+        overrides_rows = await conn.fetch("SELECT * FROM schedule_overrides WHERE LENGTH(date_str) >= 10")
 
         active_base = []
         for r in base_rows:
@@ -471,6 +471,7 @@ async def get_polls(current_user: dict = Depends(get_current_user)):
             votes = await conn.fetch("SELECT option_id, telegram_id, custom_text FROM poll_votes WHERE poll_id = $1", p_dict["id"])
             total_voters = len(set([v["telegram_id"] for v in votes]))
             my_votes = [v["option_id"] for v in votes if v["telegram_id"] == tg_id]
+            
             my_custom_vote = next((v["custom_text"] for v in votes if v["telegram_id"] == tg_id and v["option_id"] == 999), "")
 
             for opt in opts:
@@ -727,7 +728,7 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Фоновий моніторинг (розумний скрапінг пар поточного дня)
+# Фоновий моніторинг (розумний скрапінг поточного дня)
 # ---------------------------------------------------------------------------
 async def background_reminder_notifier():
     while True:
@@ -775,7 +776,6 @@ async def background_reminder_notifier():
                 except Exception as smart_parse_err:
                     print("Помилка розумного скрапінгу дня:", smart_parse_err)
 
-            # Перевірка дедлайнів
             async with pool.acquire() as conn:
                 expired_polls = await conn.fetch("SELECT id, question FROM polls WHERE is_active = TRUE AND deadline_at <= NOW()")
                 for ep in expired_polls:

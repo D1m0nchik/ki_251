@@ -81,12 +81,12 @@ class InMemoryRateLimiter:
 
 sync_month_limiter = InMemoryRateLimiter(requests_limit=4, time_window_seconds=60)
 fetch_range_limiter = InMemoryRateLimiter(requests_limit=6, time_window_seconds=60)
-broadcast_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
+broadcast_limiter = InMemoryRateLimiter(requests_limit=3, time_window_seconds=60)
 poll_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
 reminder_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
 
 # ---------------------------------------------------------------------------
-# Авторизація та перевірка цілісності Telegram initData
+# Авторизація та перевірка Telegram initData
 # ---------------------------------------------------------------------------
 def verify_telegram_data(init_data: str) -> dict:
     if not init_data or not init_data.strip():
@@ -189,9 +189,6 @@ def parse_to_utc(dt_str: str) -> datetime:
         dt_kyiv = dt_naive.astimezone(KYIV_TZ)
     return dt_kyiv.astimezone(timezone.utc)
 
-# ---------------------------------------------------------------------------
-# Допоміжна функція: перевірка вікна початку пари
-# ---------------------------------------------------------------------------
 def is_within_lesson_window(lessons: list, now: datetime, window_minutes: int = 10):
     for l in lessons:
         raw_start = l.get("time_start")
@@ -217,7 +214,7 @@ def is_within_lesson_window(lessons: list, now: datetime, window_minutes: int = 
     return False, None
 
 # ---------------------------------------------------------------------------
-# Ендпоінти профілю
+# Профіль
 # ---------------------------------------------------------------------------
 @app.get("/api/user_data")
 async def get_user_data(current_user: dict = Depends(get_current_user)):
@@ -239,7 +236,7 @@ async def update_profile(data: ProfileUpdateRequest, current_user: dict = Depend
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Розклад
+# Розклад (повністю безпечна фільтрація)
 # ---------------------------------------------------------------------------
 @app.get("/api/schedule/meta")
 async def get_schedule_meta(current_user: dict = Depends(get_current_user)):
@@ -317,116 +314,70 @@ async def get_schedule(
     subgroup = current_user.get("subgroup", 1)
     user_elective = current_user.get("elective_group", 0)
 
+    now_kyiv = datetime.now(KYIV_TZ)
+    if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
+        filter_start = datetime.strptime(sdate.strip()[:10], "%d.%m.%Y").date()
+        filter_end = datetime.strptime(edate.strip()[:10], "%d.%m.%Y").date()
+    else:
+        filter_start = now_kyiv.date()
+        filter_end = (now_kyiv + timedelta(days=7)).date()
+
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         if original:
-            if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
-                query = """
-                    SELECT * FROM schedule 
-                    WHERE LENGTH(date_str) >= 10
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= TO_DATE($1, 'DD.MM.YYYY')
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= TO_DATE($2, 'DD.MM.YYYY')
-                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
-                """
-                base_rows = await conn.fetch(query, sdate.strip()[:10], edate.strip()[:10])
-            else:
-                query = """
-                    SELECT * FROM schedule 
-                    WHERE LENGTH(date_str) >= 10
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
-                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
-                """
-                base_rows = await conn.fetch(query)
+            rows = await conn.fetch("SELECT * FROM schedule WHERE date_str ~ '^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}'")
+            filtered = []
+            for r in rows:
+                try:
+                    d = datetime.strptime(r["date_str"][:10], "%d.%m.%Y").date()
+                    if filter_start <= d <= filter_end:
+                        filtered.append(dict(r))
+                except Exception:
+                    continue
+            filtered.sort(key=lambda x: (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0)))
+            return filtered
 
-            return [dict(r) for r in base_rows]
+        base_rows = await conn.fetch("SELECT * FROM schedule WHERE date_str ~ '^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}'")
+        overrides_rows = await conn.fetch("SELECT * FROM schedule_overrides WHERE date_str ~ '^[0-9]{2}\\.[0-9]{2}\\.[0-9]{4}'")
 
-        if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
-            s_clean = sdate.strip()[:10]
-            e_clean = edate.strip()[:10]
-            if role == "starosta":
-                query = """
-                    SELECT * FROM schedule 
-                    WHERE LENGTH(date_str) >= 10
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= TO_DATE($1, 'DD.MM.YYYY')
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= TO_DATE($2, 'DD.MM.YYYY')
-                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
-                """
-                base_rows = await conn.fetch(query, s_clean, e_clean)
-            else:
-                query = """
-                    SELECT * FROM schedule 
-                    WHERE LENGTH(date_str) >= 10
-                      AND target_subgroup IN (0, $1)
-                      AND (COALESCE(elective_num, 0) = 0 OR $2 = 0 OR elective_num = $2)
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= TO_DATE($3, 'DD.MM.YYYY')
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= TO_DATE($4, 'DD.MM.YYYY')
-                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
-                """
-                base_rows = await conn.fetch(query, subgroup, user_elective, s_clean, e_clean)
-
-            overrides = await conn.fetch("""
-                SELECT * FROM schedule_overrides
-                WHERE LENGTH(date_str) >= 10
-                  AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= TO_DATE($1, 'DD.MM.YYYY')
-                  AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= TO_DATE($2, 'DD.MM.YYYY')
-            """, s_clean, e_clean)
-        else:
-            if role == "starosta":
-                query = """
-                    SELECT * FROM schedule 
-                    WHERE LENGTH(date_str) >= 10
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
-                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
-                """
-                base_rows = await conn.fetch(query)
-            else:
-                query = """
-                    SELECT * FROM schedule 
-                    WHERE LENGTH(date_str) >= 10
-                      AND target_subgroup IN (0, $1)
-                      AND (COALESCE(elective_num, 0) = 0 OR $2 = 0 OR elective_num = $2)
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                      AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
-                    ORDER BY MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) ASC, lesson_number ASC
-                """
-                base_rows = await conn.fetch(query, subgroup, user_elective)
-
-            overrides = await conn.fetch("""
-                SELECT * FROM schedule_overrides
-                WHERE LENGTH(date_str) >= 10
-                  AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) >= (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-                  AND MAKE_DATE(SUBSTRING(date_str, 7, 4)::int, SUBSTRING(date_str, 4, 2)::int, SUBSTRING(date_str, 1, 2)::int) <= ((NOW() AT TIME ZONE 'Europe/Kyiv')::date + INTERVAL '7 days')
-            """)
+        active_base = []
+        for r in base_rows:
+            try:
+                d = datetime.strptime(r["date_str"][:10], "%d.%m.%Y").date()
+                if filter_start <= d <= filter_end:
+                    if role != "starosta":
+                        if r["target_subgroup"] not in (0, subgroup):
+                            continue
+                        el = r.get("elective_num", 0) or 0
+                        if el != 0 and user_elective != 0 and el != user_elective:
+                            continue
+                    active_base.append(dict(r))
+            except Exception:
+                continue
 
         replaced_ids = set()
         active_overrides = []
-        for ov in overrides:
-            ov_dict = dict(ov)
-            if role != "starosta":
-                if ov_dict["target_subgroup"] != 0 and ov_dict["target_subgroup"] != subgroup:
-                    continue
-                ov_el = ov_dict.get("elective_num", 0) or 0
-                if ov_el != 0 and user_elective != 0 and ov_el != user_elective:
-                    continue
-
-            if ov_dict.get("replaces_schedule_ids"):
-                replaced_ids.update(ov_dict["replaces_schedule_ids"])
-            ov_dict["is_custom_override"] = True
-            active_overrides.append(ov_dict)
-
-        final_lessons = [dict(r) for r in base_rows if r["id"] not in replaced_ids]
-        final_lessons.extend(active_overrides)
-
-        def parse_lesson_sort(x):
+        for ov in overrides_rows:
             try:
-                d = x.get("date_str", "")[:10]
-                return (int(d[6:10]), int(d[3:5]), int(d[0:2]), int(x.get("lesson_number", 0)))
+                d = datetime.strptime(ov["date_str"][:10], "%d.%m.%Y").date()
+                if filter_start <= d <= filter_end:
+                    ov_dict = dict(ov)
+                    if role != "starosta":
+                        if ov_dict["target_subgroup"] != 0 and ov_dict["target_subgroup"] != subgroup:
+                            continue
+                        ov_el = ov_dict.get("elective_num", 0) or 0
+                        if ov_el != 0 and user_elective != 0 and ov_el != user_elective:
+                            continue
+                    if ov_dict.get("replaces_schedule_ids"):
+                        replaced_ids.update(ov_dict["replaces_schedule_ids"])
+                    ov_dict["is_custom_override"] = True
+                    active_overrides.append(ov_dict)
             except Exception:
-                return (0, 0, 0, 0)
+                continue
 
-        final_lessons.sort(key=parse_lesson_sort)
+        final_lessons = [r for r in active_base if r["id"] not in replaced_ids]
+        final_lessons.extend(active_overrides)
+        final_lessons.sort(key=lambda x: (datetime.strptime(x["date_str"][:10], "%d.%m.%Y"), x.get("lesson_number", 0)))
         return final_lessons
 
 class DateRangeRequest(BaseModel):
@@ -440,7 +391,6 @@ async def fetch_schedule_range(
     current_user: dict = Depends(get_current_user)
 ):
     await fetch_range_limiter.check(f"fetch_range_{current_user['telegram_id']}")
-
     await fetch_and_save_schedule(sdate=data.sdate.strip(), edate=data.edate.strip())
     return await get_schedule(
         sdate=data.sdate.strip(), 
@@ -521,7 +471,6 @@ async def get_polls(current_user: dict = Depends(get_current_user)):
             votes = await conn.fetch("SELECT option_id, telegram_id, custom_text FROM poll_votes WHERE poll_id = $1", p_dict["id"])
             total_voters = len(set([v["telegram_id"] for v in votes]))
             my_votes = [v["option_id"] for v in votes if v["telegram_id"] == tg_id]
-            
             my_custom_vote = next((v["custom_text"] for v in votes if v["telegram_id"] == tg_id and v["option_id"] == 999), "")
 
             for opt in opts:
@@ -583,7 +532,6 @@ async def create_poll(data: PollCreateRequest, starosta: dict = Depends(require_
             RETURNING id
         """, data.question.strip(), json.dumps(options_json, ensure_ascii=False), data.is_multiple, data.allow_custom, deadline_utc)
         poll_id = poll_row["id"]
-
         students = await conn.fetch("SELECT telegram_id FROM users")
 
     type_str = "Кілька варіантів" if data.is_multiple else "Один варіант"
@@ -679,7 +627,7 @@ async def close_poll(poll_id: int = Query(...), starosta: dict = Depends(require
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Дедлайни / Reminders
+# Дедлайни
 # ---------------------------------------------------------------------------
 class ReminderCreateRequest(BaseModel):
     title: str = Field(..., min_length=2, max_length=200)
@@ -730,7 +678,6 @@ async def create_reminder(data: ReminderCreateRequest, starosta: dict = Depends(
             RETURNING id
         """, data.title.strip(), data.description.strip(), start_utc, deadline_utc)
         reminder_id = rem_row["id"]
-
         students = await conn.fetch("SELECT telegram_id FROM users")
 
     deadline_kyiv_str = deadline_utc.astimezone(KYIV_TZ).strftime('%d.%m.%Y %H:%M')
@@ -780,54 +727,7 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Заплановані сповіщення (Scheduled Broadcasts)
-# ---------------------------------------------------------------------------
-class ScheduledBroadcastCreateRequest(BaseModel):
-    title: str = Field(..., min_length=2, max_length=200)
-    message: str = Field(..., min_length=2, max_length=2000)
-    send_at: str
-
-@app.get("/api/broadcasts/scheduled")
-async def get_scheduled_broadcasts(starosta: dict = Depends(require_starosta)):
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT id, title, message, 
-                   to_char(send_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as send_at_str,
-                   send_at, is_sent
-            FROM scheduled_broadcasts
-            WHERE is_sent = FALSE AND send_at > NOW()
-            ORDER BY send_at ASC
-        """)
-        return [dict(r) for r in rows]
-
-@app.post("/api/broadcasts/schedule")
-async def create_scheduled_broadcast(data: ScheduledBroadcastCreateRequest, starosta: dict = Depends(require_starosta)):
-    await broadcast_limiter.check(f"broadcast_schedule_{starosta['telegram_id']}")
-    send_at_utc = parse_to_utc(data.send_at)
-    
-    if send_at_utc <= datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="Час відкладеного сповіщення має бути в майбутньому")
-
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            INSERT INTO scheduled_broadcasts (title, message, send_at)
-            VALUES ($1, $2, $3)
-            RETURNING id
-        """, data.title.strip(), data.message.strip(), send_at_utc)
-
-    return {"status": "ok", "id": row["id"]}
-
-@app.post("/api/broadcasts/scheduled/delete")
-async def delete_scheduled_broadcast(broadcast_id: int = Query(...), starosta: dict = Depends(require_starosta)):
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM scheduled_broadcasts WHERE id = $1", broadcast_id)
-    return {"status": "ok"}
-
-# ---------------------------------------------------------------------------
-# Фоновий моніторинг (розумний скрапінг пар + нагадування + відкладені сповіщення)
+# Фоновий моніторинг (розумний скрапінг поточного дня)
 # ---------------------------------------------------------------------------
 async def background_reminder_notifier():
     while True:
@@ -840,7 +740,6 @@ async def background_reminder_notifier():
             if not pool:
                 continue
 
-            # 1. Розумне фонове оновлення розкладу поточного дня
             if now_kyiv.weekday() < 5 and 8 <= now_kyiv.hour <= 18:
                 try:
                     async with pool.acquire() as conn:
@@ -876,35 +775,7 @@ async def background_reminder_notifier():
                 except Exception as smart_parse_err:
                     print("Помилка розумного скрапінгу дня:", smart_parse_err)
 
-            # 2. Перевірка та відправка ВІДКЛАДЕНИХ СПОВІЩЕНЬ
-            try:
-                async with pool.acquire() as conn:
-                    due_broadcasts = await conn.fetch("""
-                        SELECT id, title, message 
-                        FROM scheduled_broadcasts 
-                        WHERE is_sent = FALSE AND send_at <= NOW()
-                    """)
-                    
-                    if due_broadcasts:
-                        students = await conn.fetch("SELECT telegram_id FROM users")
-                        for b in due_broadcasts:
-                            formatted_msg = linkify_telegram(b["message"].strip())
-                            text = f"📢 <b>{b['title'].strip()}</b>\n\n{formatted_msg}\n\n<i>— Заплановане нагадування від старости</i>"
-                            
-                            # Зберігаємо в стрічку оголошень
-                            await conn.execute("INSERT INTO announcements (title, message) VALUES ($1, $2)", b["title"].strip(), b["message"].strip())
-                            await conn.execute("UPDATE scheduled_broadcasts SET is_sent = TRUE WHERE id = $1", b["id"])
-                            
-                            for s in students:
-                                try:
-                                    await bot.send_message(chat_id=s["telegram_id"], text=text, parse_mode="HTML", disable_web_page_preview=False)
-                                except Exception:
-                                    pass
-                            print(f"[{now_kyiv.strftime('%H:%M:%S')}] Відкладене сповіщення «{b['title']}» успішно надіслано групі!")
-            except Exception as broadcast_err:
-                print("Помилка обробки запланованих сповіщень:", broadcast_err)
-
-            # 3. Обробка прострочених опитувань та нагадувань дедлайнів
+            # Перевірка дедлайнів
             async with pool.acquire() as conn:
                 expired_polls = await conn.fetch("SELECT id, question FROM polls WHERE is_active = TRUE AND deadline_at <= NOW()")
                 for ep in expired_polls:
@@ -1013,7 +884,7 @@ async def startup_event():
     asyncio.create_task(background_reminder_notifier())
 
 # ---------------------------------------------------------------------------
-# Керування групою (староста)
+# Керування групою
 # ---------------------------------------------------------------------------
 @app.get("/api/group/students")
 async def get_all_group_students(starosta: dict = Depends(require_starosta)):

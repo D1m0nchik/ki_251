@@ -1,11 +1,10 @@
 import re
 import aiohttp
-from bs4 import BeautifulSoup
 from datetime import datetime
 from database import get_db_pool
 
-GROUP_ID = 2658  # ID групи КІ-25-1 в системі ІФНТУНГ
-BASE_URL = "https://online.nung.edu.ua/schedule/view"
+GROUP_ID = -2281  # OBJ_ID для групи КІ-25-1
+ICAL_URL = "https://dekanat.nung.edu.ua/cgi-bin/timetable_export.cgi?req_type=rozklad&req_mode=group&OBJ_ID=-2281&req_format=iCal&coding_mode=UTF8&bs=ok&fk=1"
 
 LESSON_TIMES = {
     1: ("08:00", "09:20"),
@@ -18,7 +17,6 @@ LESSON_TIMES = {
 }
 
 def extract_meet_url(text: str) -> str:
-    """Витягує посилання на відеозустріч або навчальний ресурс."""
     if not text:
         return ""
     meet_match = re.search(r'(https?://(?:meet\.google\.com/[a-z0-9\-]+|zoom\.us/j/[0-9\?&=]+|teams\.microsoft\.com/[^\s<>"]+))', text, re.I)
@@ -29,153 +27,98 @@ def extract_meet_url(text: str) -> str:
         return any_link.group(1).strip()
     return ""
 
-def detect_subgroup(text: str) -> int:
-    text_lower = text.lower()
-    if "підгр. 1" in text_lower or "1 підгр" in text_lower or "(1 підгрупа)" in text_lower or "підгр.1" in text_lower:
-        return 1
-    if "підгр. 2" in text_lower or "2 підгр" in text_lower or "(2 підгрупа)" in text_lower or "підгр.2" in text_lower:
-        return 2
-    return 0
-
-def detect_elective(text: str) -> int:
-    text_lower = text.lower()
-    if "вибіркова 1" in text_lower or "вибіркова №1" in text_lower:
-        return 1
-    if "вибіркова 2" in text_lower or "вибіркова №2" in text_lower:
-        return 2
-    if text.strip().startswith("*") or "вибіркова" in text_lower:
-        return 1
-    return 0
-
-async def fetch_and_save_schedule(sdate: str, edate: str) -> bool:
+async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
     """
-    Завантажує офіційний розклад з сайту ІФНТУНГ за діапазоном дат
-    і зберігає в таблицю schedule з оновленням посилань та кабінетів.
-    Повертає True, якщо були знайдені або оновлені пари.
+    Завантажує офіційний розклад через iCal експорт деканату ІФНТУНГ
+    і синхронізує його з базою даних.
     """
-    params = {
-        "group": GROUP_ID,
-        "sdate": sdate,
-        "edate": edate
-    }
-
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-
-    async with aiohttp.ClientSession(headers=headers) as session:
-        try:
-            async with session.get(BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=20)) as response:
-                if response.status != 200:
+    
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(ICAL_URL, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                if resp.status != 200:
+                    print(f"Помилка завантаження iCal: статус {resp.status}")
                     return False
-                html = await response.text()
-        except Exception as e:
-            print("Помилка з'єднання з сервером розкладу ІФНТУНГ:", e)
-            return False
-
-    soup = BeautifulSoup(html, "html.parser")
-    pool = await get_db_pool()
-    if not pool:
+                raw_ics = await resp.text()
+    except Exception as e:
+        print("Помилка з'єднання з iCal сервером:", e)
         return False
 
-    current_date = ""
-    current_dow = ""
+    events = raw_ics.split("BEGIN:VEVENT")
+    if len(events) <= 1:
+        return False
+
     parsed_lessons = []
+    days_ua = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
 
-    date_pattern = re.compile(r'(\d{2}\.\d{2}\.\d{4})')
-    days_ua_pattern = re.compile(r'(понеділок|вівторок|середа|четвер|п\'ятниця|субота|неділя)', re.I)
+    for ev in events[1:]:
+        dtstart_m = re.search(r'DTSTART(?:;[^:]+)?:(\d{8}T\d{4})', ev)
+        dtend_m = re.search(r'DTEND(?:;[^:]+)?:(\d{8}T\d{4})', ev)
+        summary_m = re.search(r'SUMMARY:(.*?)(?:\r?\n[A-Z]|\r?\n$)', ev, re.S)
+        location_m = re.search(r'LOCATION:(.*?)(?:\r?\n[A-Z]|\r?\n$)', ev, re.S)
+        desc_m = re.search(r'DESCRIPTION:(.*?)(?:\r?\n[A-Z]|\r?\n$)', ev, re.S)
 
-    elements = soup.find_all(["div", "tr", "p", "td"])
-    for el in elements:
-        text = el.get_text(" ", strip=True)
-        date_find = date_pattern.search(text)
-        if date_find:
-            current_date = date_find.group(1)
-            dow_find = days_ua_pattern.search(text)
-            if dow_find:
-                current_dow = dow_find.group(1).capitalize()
-
-    lesson_items = soup.find_all(["div", "tr"], class_=re.compile(r'(lesson|pair|item|row)', re.I))
-    if not lesson_items:
-        lesson_items = soup.find_all("tr")
-
-    for item in lesson_items:
-        text = item.get_text(" ", strip=True)
-        if not text:
+        if not dtstart_m:
             continue
 
-        pair_match = re.search(r'([1-7])\s*(?:пара|п\.|\))', text, re.I)
-        if not pair_match:
-            continue
-
-        lesson_num = int(pair_match.group(1))
-        t_start, t_end = LESSON_TIMES.get(lesson_num, ("08:00", "09:20"))
-
-        item_date = current_date
-        item_dow = current_dow
-        parent_text = item.parent.get_text(" ", strip=True) if item.parent else ""
-        parent_date_match = date_pattern.search(parent_text)
-        if parent_date_match:
-            item_date = parent_date_match.group(1)
-            dow_m = days_ua_pattern.search(parent_text)
-            if dow_m:
-                item_dow = dow_m.group(1).capitalize()
-
-        if not item_date:
-            continue
-
-        meet_url = ""
-        links = item.find_all("a", href=True)
-        for a in links:
-            href = a['href']
-            found_meet = extract_meet_url(href)
-            if found_meet:
-                meet_url = found_meet
-                if "meet.google.com" in meet_url or "zoom.us" in meet_url:
-                    break
+        raw_dt = dtstart_m.group(1)
+        year = raw_dt[0:4]
+        month = raw_dt[4:6]
+        day = raw_dt[6:8]
+        time_start = f"{raw_dt[9:11]}:{raw_dt[11:13]}"
         
-        if not meet_url:
-            meet_url = extract_meet_url(text)
+        time_end = ""
+        if dtend_m:
+            raw_end = dtend_m.group(1)
+            time_end = f"{raw_end[9:11]}:{raw_end[11:13]}"
 
-        l_type = "Лек"
-        if "(Лаб)" in text or "Лаб" in text or "лабораторна" in text.lower():
-            l_type = "Лаб"
-        elif "(Пр)" in text or "Пр" in text or "практична" in text.lower():
-            l_type = "Пр"
+        date_str = f"{day}.{month}.{year}"
+        try:
+            dt_obj = datetime(int(year), int(month), int(day))
+            day_of_week = days_ua[dt_obj.weekday()]
+        except Exception:
+            day_of_week = ""
 
-        room = ""
-        room_match = re.search(r'(\d+[\.\-][А-Яа-я0-9]+(?:\.ауд|\s*ауд)?|дистанційно|онлайн)', text, re.I)
-        if room_match:
-            room = room_match.group(1).strip()
-        elif meet_url:
-            room = "Онлайн (Google Meet)"
+        summary = summary_m.group(1).replace("\r", "").replace("\n", " ").strip() if summary_m else ""
+        room = location_m.group(1).replace("\r", "").replace("\n", " ").strip() if location_m else ""
+        desc = desc_m.group(1).replace("\\n", "\n").replace("\r", "").strip() if desc_m else ""
+
+        lesson_num = 1
+        if time_start.startswith("08:"): lesson_num = 1
+        elif time_start.startswith("09:"): lesson_num = 2
+        elif time_start.startswith("11:"): lesson_num = 3
+        elif time_start.startswith("12:") or time_start.startswith("13:"): lesson_num = 4
+        elif time_start.startswith("14:"): lesson_num = 5
+        elif time_start.startswith("15:") or time_start.startswith("16:"): lesson_num = 6
+        elif time_start.startswith("17:"): lesson_num = 7
+
+        meet_url = extract_meet_url(desc) or extract_meet_url(summary)
+
+        target_sg = 0
+        if "підгр. 1" in summary.lower() or "1 підгр" in summary.lower(): 
+            target_sg = 1
+        elif "підгр. 2" in summary.lower() or "2 підгр" in summary.lower(): 
+            target_sg = 2
+
+        elective_num = 1 if (summary.startswith("*") or "вибіркова" in summary.lower()) else 0
 
         teacher = ""
-        teacher_match = re.search(r'((?:доцент|професор|асистент|викладач)?\s*[А-ЯЄІЇ][а-яєії]+\s+[А-ЯЄІЇ][а-яєії]+\s+[А-ЯЄІЇ][а-яєії]+)', text)
-        if teacher_match:
-            teacher = teacher_match.group(1).strip()
-
-        subject = text
-        for remove_part in [item_date, item_dow, room, teacher, meet_url, "пара"]:
-            if remove_part:
-                subject = subject.replace(remove_part, "")
-        subject = re.sub(r'https?://[^\s<>"]+', '', subject)
-        subject = re.sub(r'[1-7]\s*пара', '', subject)
-        subject = re.sub(r'\s+', ' ', subject).strip()
-        if len(subject) > 80:
-            subject = subject[:77] + "..."
-
-        target_sg = detect_subgroup(text)
-        elective_num = detect_elective(text)
+        if desc:
+            lines = [l.strip() for l in desc.split("\n") if l.strip()]
+            if lines:
+                teacher = lines[0]
 
         parsed_lessons.append({
-            "date_str": item_date,
-            "day_of_week": item_dow,
+            "date_str": date_str,
+            "day_of_week": day_of_week,
             "lesson_number": lesson_num,
-            "time_start": t_start,
-            "time_end": t_end,
-            "subject": subject or "Заняття",
-            "lesson_type": l_type,
+            "time_start": time_start,
+            "time_end": time_end or "09:20",
+            "subject": summary or "Заняття",
+            "lesson_type": "Лаб" if "Лаб" in summary else "Лек",
             "teacher": teacher,
             "room": room,
             "target_subgroup": target_sg,
@@ -183,7 +126,8 @@ async def fetch_and_save_schedule(sdate: str, edate: str) -> bool:
             "elective_num": elective_num
         })
 
-    if not parsed_lessons:
+    pool = await get_db_pool()
+    if not pool or not parsed_lessons:
         return False
 
     async with pool.acquire() as conn:

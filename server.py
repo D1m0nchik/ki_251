@@ -81,7 +81,7 @@ class InMemoryRateLimiter:
 
 sync_month_limiter = InMemoryRateLimiter(requests_limit=4, time_window_seconds=60)
 fetch_range_limiter = InMemoryRateLimiter(requests_limit=6, time_window_seconds=60)
-broadcast_limiter = InMemoryRateLimiter(requests_limit=3, time_window_seconds=60)
+broadcast_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
 poll_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
 reminder_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
 
@@ -193,11 +193,6 @@ def parse_to_utc(dt_str: str) -> datetime:
 # Допоміжна функція: перевірка вікна початку пари
 # ---------------------------------------------------------------------------
 def is_within_lesson_window(lessons: list, now: datetime, window_minutes: int = 10):
-    """
-    Перевіряє, чи поточний час потрапляє у вікно [time_start - window, time_start + window]
-    хоча б для однієї пари зі списку.
-    Повертає кортеж: (bool_чи_потрапляє, match_info_dict_або_None).
-    """
     for l in lessons:
         raw_start = l.get("time_start")
         if not raw_start or not isinstance(raw_start, str):
@@ -217,7 +212,6 @@ def is_within_lesson_window(lessons: list, now: datetime, window_minutes: int = 
                     "subject": l.get("subject", "Заняття")
                 }
         except Exception:
-            # Якщо час конкретної пари пошкоджено — пропускаємо її та йдемо далі
             continue
 
     return False, None
@@ -786,7 +780,54 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Фоновий моніторинг (розумний скрапінг пар поточного дня + нагадування)
+# Заплановані сповіщення (Scheduled Broadcasts)
+# ---------------------------------------------------------------------------
+class ScheduledBroadcastCreateRequest(BaseModel):
+    title: str = Field(..., min_length=2, max_length=200)
+    message: str = Field(..., min_length=2, max_length=2000)
+    send_at: str
+
+@app.get("/api/broadcasts/scheduled")
+async def get_scheduled_broadcasts(starosta: dict = Depends(require_starosta)):
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, title, message, 
+                   to_char(send_at AT TIME ZONE 'Europe/Kyiv', 'DD.MM.YYYY HH24:MI') as send_at_str,
+                   send_at, is_sent
+            FROM scheduled_broadcasts
+            WHERE is_sent = FALSE AND send_at > NOW()
+            ORDER BY send_at ASC
+        """)
+        return [dict(r) for r in rows]
+
+@app.post("/api/broadcasts/schedule")
+async def create_scheduled_broadcast(data: ScheduledBroadcastCreateRequest, starosta: dict = Depends(require_starosta)):
+    await broadcast_limiter.check(f"broadcast_schedule_{starosta['telegram_id']}")
+    send_at_utc = parse_to_utc(data.send_at)
+    
+    if send_at_utc <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Час відкладеного сповіщення має бути в майбутньому")
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            INSERT INTO scheduled_broadcasts (title, message, send_at)
+            VALUES ($1, $2, $3)
+            RETURNING id
+        """, data.title.strip(), data.message.strip(), send_at_utc)
+
+    return {"status": "ok", "id": row["id"]}
+
+@app.post("/api/broadcasts/scheduled/delete")
+async def delete_scheduled_broadcast(broadcast_id: int = Query(...), starosta: dict = Depends(require_starosta)):
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM scheduled_broadcasts WHERE id = $1", broadcast_id)
+    return {"status": "ok"}
+
+# ---------------------------------------------------------------------------
+# Фоновий моніторинг (розумний скрапінг пар + нагадування + відкладені сповіщення)
 # ---------------------------------------------------------------------------
 async def background_reminder_notifier():
     while True:
@@ -835,7 +876,35 @@ async def background_reminder_notifier():
                 except Exception as smart_parse_err:
                     print("Помилка розумного скрапінгу дня:", smart_parse_err)
 
-            # 2. Обробка прострочених опитувань та нагадувань дедлайнів
+            # 2. Перевірка та відправка ВІДКЛАДЕНИХ СПОВІЩЕНЬ
+            try:
+                async with pool.acquire() as conn:
+                    due_broadcasts = await conn.fetch("""
+                        SELECT id, title, message 
+                        FROM scheduled_broadcasts 
+                        WHERE is_sent = FALSE AND send_at <= NOW()
+                    """)
+                    
+                    if due_broadcasts:
+                        students = await conn.fetch("SELECT telegram_id FROM users")
+                        for b in due_broadcasts:
+                            formatted_msg = linkify_telegram(b["message"].strip())
+                            text = f"📢 <b>{b['title'].strip()}</b>\n\n{formatted_msg}\n\n<i>— Заплановане нагадування від старости</i>"
+                            
+                            # Зберігаємо в стрічку оголошень
+                            await conn.execute("INSERT INTO announcements (title, message) VALUES ($1, $2)", b["title"].strip(), b["message"].strip())
+                            await conn.execute("UPDATE scheduled_broadcasts SET is_sent = TRUE WHERE id = $1", b["id"])
+                            
+                            for s in students:
+                                try:
+                                    await bot.send_message(chat_id=s["telegram_id"], text=text, parse_mode="HTML", disable_web_page_preview=False)
+                                except Exception:
+                                    pass
+                            print(f"[{now_kyiv.strftime('%H:%M:%S')}] Відкладене сповіщення «{b['title']}» успішно надіслано групі!")
+            except Exception as broadcast_err:
+                print("Помилка обробки запланованих сповіщень:", broadcast_err)
+
+            # 3. Обробка прострочених опитувань та нагадувань дедлайнів
             async with pool.acquire() as conn:
                 expired_polls = await conn.fetch("SELECT id, question FROM polls WHERE is_active = TRUE AND deadline_at <= NOW()")
                 for ep in expired_polls:

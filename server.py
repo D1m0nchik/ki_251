@@ -56,7 +56,7 @@ LESSON_TIMES = {
 }
 
 # ---------------------------------------------------------------------------
-# Rate Limiting (in-memory)
+# Rate Limiting
 # ---------------------------------------------------------------------------
 class InMemoryRateLimiter:
     def __init__(self, requests_limit: int, time_window_seconds: int):
@@ -86,7 +86,7 @@ poll_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=
 reminder_create_limiter = InMemoryRateLimiter(requests_limit=5, time_window_seconds=60)
 
 # ---------------------------------------------------------------------------
-# Авторизація та перевірка Telegram initData
+# Авторизація Telegram initData
 # ---------------------------------------------------------------------------
 def verify_telegram_data(init_data: str) -> dict:
     if not init_data or not init_data.strip():
@@ -236,7 +236,7 @@ async def update_profile(data: ProfileUpdateRequest, current_user: dict = Depend
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Розклад (повністю безпечна фільтрація)
+# Розклад
 # ---------------------------------------------------------------------------
 @app.get("/api/schedule/meta")
 async def get_schedule_meta(current_user: dict = Depends(get_current_user)):
@@ -727,7 +727,7 @@ async def delete_reminder(reminder_id: int = Query(...), starosta: dict = Depend
     return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
-# Фоновий моніторинг (розумний скрапінг поточного дня)
+# Фоновий моніторинг (розумний скрапінг пар поточного дня)
 # ---------------------------------------------------------------------------
 async def background_reminder_notifier():
     while True:

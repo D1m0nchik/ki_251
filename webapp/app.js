@@ -15,6 +15,7 @@ let selectedSubgroupFilter = 0;
 
 let activeSearchRange = null;
 let showOriginalSchedule = false;
+let isSyncingNow = false;
 
 let calCurrentYear = 2026;
 let calCurrentMonth = 11;
@@ -138,7 +139,7 @@ async function init() {
 
   setInterval(() => {
     refreshAllData(true);
-  }, 20000);
+  }, 25000);
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
@@ -185,20 +186,18 @@ async function loadSchedule(isBackground = false) {
 
     const title = document.getElementById("schedule-view-title");
     if (title) {
-      const baseTitle = activeSearchRange ? `Розклад: ${activeSearchRange.sStr} — ${activeSearchRange.eStr}` : "Розклад: на 7 днів вперед";
+      const baseTitle = activeSearchRange ? `Розклад: ${activeSearchRange.sStr} — ${activeSearchRange.eStr}` : "Розклад: поточний та наступний тиждень";
       title.innerHTML = showOriginalSchedule ? `${baseTitle} <span style="font-size: 12px; color: #8e8ea0; font-weight: 500;">[Оригінал сайту]</span>` : baseTitle;
-    }
-
-    if (!allScheduleData || allScheduleData.length === 0) {
-      if (!activeSearchRange) {
-        await syncFullMonth();
-        return;
-      }
     }
 
     renderSchedule(allScheduleData);
   } catch (err) {
-    container.innerHTML = `<p style="color: #ff4757; text-align: center;">Не вдалося завантажити розклад: ${err.message}</p>`;
+    container.innerHTML = `
+      <div style="text-align: center; padding: 20px;">
+        <p style="color: #ff4757; margin-bottom: 8px;">Не вдалося отримати розклад: ${err.message}</p>
+        <button class="btn-primary" onclick="syncFullMonth()" style="display: inline-block;">Оновити розклад з сайту</button>
+      </div>
+    `;
   }
 }
 
@@ -209,9 +208,6 @@ function showDefaultScheduleFromToday() {
   const eInput = document.getElementById("filter-edate");
   if (sInput) sInput.value = "";
   if (eInput) eInput.value = "";
-
-  const title = document.getElementById("schedule-view-title");
-  if (title) title.innerText = "Розклад: на 7 днів вперед";
 
   loadSchedule();
 }
@@ -264,23 +260,43 @@ function switchStarostaViewSubgroup(subgroup, btn) {
 }
 
 async function syncFullMonth() {
+  if (isSyncingNow) return;
+  isSyncingNow = true;
+
+  const btn = document.querySelector(".btn-sync");
+  const oldText = btn ? btn.innerHTML : "🔄 Оновити розклад";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = "⏳ Оновлення...";
+  }
+
   const container = document.getElementById("schedule-list");
-  if (container) container.innerHTML = "<p class='loading'>🔄 Оновлення розкладу з сайту університету...</p>";
+  if (container && allScheduleData.length === 0) {
+    container.innerHTML = "<p class='loading'>🔄 Завантаження свіжого розкладу з сайту університету...</p>";
+  }
 
   try {
     await apiRequest("/api/schedule/sync_month", "POST");
     await loadSchedule();
     if (tg && tg.showPopup) {
-      tg.showPopup({ message: "Розклад успішно оновлено!" });
+      tg.showPopup({ message: "Розклад успішно синхронізовано!" });
     }
   } catch (err) {
-    if (container) {
-      container.innerHTML = `<p style='color: #ff4757; text-align: center; padding: 20px;'>
-        Не вдалося оновити з сайту: ${err.message}<br>
-        <button class="btn-primary" onclick="loadSchedule()" style="margin-top: 10px;">Показати збережений розклад</button>
-      </p>`;
-    }
     alert("Помилка синхронізації: " + err.message);
+    if (container && allScheduleData.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; padding: 20px;">
+          <p style="color: #ff4757; margin-bottom: 8px;">Не вдалося отримати заняття: ${err.message}</p>
+          <button class="btn-primary" onclick="syncFullMonth()">Повторити спробу</button>
+        </div>
+      `;
+    }
+  } finally {
+    isSyncingNow = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = oldText;
+    }
   }
 }
 
@@ -295,7 +311,12 @@ function renderSchedule(lessonsList) {
   }
 
   if (visibleLessons.length === 0) {
-    container.innerHTML = "<p class='text-muted'>Занять на обрані дні не знайдено.</p>";
+    container.innerHTML = `
+      <div style="text-align: center; padding: 30px 10px;">
+        <p class='text-muted' style="margin-bottom: 12px;">Занять на обрані дні не знайдено в базі.</p>
+        <button class="btn-primary" onclick="syncFullMonth()" style="display: inline-block;">🔄 Завантажити пари з сайту</button>
+      </div>
+    `;
     return;
   }
 
@@ -328,12 +349,6 @@ function renderSchedule(lessonsList) {
         ? `<button onclick="deleteOverrideItem(${item.id})" style="background:none; border:none; color:#8e8ea0; font-size:14px; cursor:pointer; padding:0 4px;" title="Скасувати заміну">✕</button>`
         : "";
 
-      let replacementHtml = item.is_replacement 
-        ? `<div class="replacement-badge" style="background: rgba(255, 71, 87, 0.15); border: 1px solid #ff4757; padding: 6px 10px; border-radius: 6px; margin-bottom: 4px; color: #ff6b81; font-weight: 600; font-size: 12px;">
-            🔴 ${item.replacement_note || "Увага! Заміна"}
-           </div>` 
-        : "";
-      
       let starostaBtn = (currentUser && currentUser.role === "starosta")
         ? `<button class="btn-journal" onclick="openAttendanceModal(${item.id}, '${item.subject.replace(/'/g, "\\'")}', ${isCustom})">📝 Журнал</button>`
         : "";
@@ -375,11 +390,12 @@ function renderSchedule(lessonsList) {
         roomDisplay = "Онлайн (Google Meet)";
       }
 
+      const typeLabel = (item.lesson_type && !item.subject.includes(`(${item.lesson_type})`)) ? ` (${item.lesson_type})` : "";
+
       card.className = `card lesson-card ${customClass} ${item.is_replacement ? 'replacement' : ''}`;
       card.innerHTML = `
         ${customBadge}
         ${onlineBadge}
-        ${replacementHtml}
         
         <div class="lesson-header-line">
           <div class="lesson-title-badges">
@@ -394,10 +410,10 @@ function renderSchedule(lessonsList) {
         </div>
 
         <p style="margin:2px 0 2px 0; font-size:14px; line-height:1.35;">
-          <strong>${item.subject}</strong> (${item.lesson_type})
+          <strong>${item.subject}</strong>${typeLabel}
         </p>
         <p style="margin:0; font-size: 13px; color: var(--text-muted);">
-          🏛 ${roomDisplay} | 👨‍🏫 ${item.teacher}
+          🏛 ${roomDisplay || 'Аудиторія уточнюється'} | 👨‍🏫 ${item.teacher || 'Викладач уточнюється'}
         </p>
         ${meetBtnHtml}
       `;
@@ -409,7 +425,7 @@ function renderSchedule(lessonsList) {
 }
 
 // =========================================================
-// ЄДИНА ХРОНОЛОГІЧНА СТРІЧКА
+// СТРІЧКА НОВИН ТА ОПИТУВАНЬ
 // =========================================================
 
 async function loadCombinedFeed() {
@@ -542,7 +558,7 @@ function renderPollCard(poll, isStarosta, isPinned = false) {
       <span>${poll.created_str || ''}</span>
     </div>
     ${poll.deadline_str ? `<div style="font-size: 11px; color: #ff6b81;">⏳ До: ${poll.deadline_str}</div>` : ''}
-    <div style="display: flex; flex-direction: column; gap: 6px;">
+    <div style="display: flex; direction: column; gap: 6px;">
       ${optionsHtml}
     </div>
     ${starostaControls}
@@ -752,9 +768,10 @@ async function sendBroadcastMessage() {
   await loadCombinedFeed();
 }
 
-// ---------------------------------------------------------------------------
-// Журнал пари (модальне вікно)
-// ---------------------------------------------------------------------------
+// =========================================================
+// ЖУРНАЛ ПАРИ (МОДАЛЬНЕ ВІКНО)
+// =========================================================
+
 async function openAttendanceModal(scheduleId, subjectName, isOverride = false) {
   currentActiveLessonId = scheduleId;
   currentIsOverride = Boolean(isOverride);
@@ -840,9 +857,10 @@ function closeAttendanceModal() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Календар та Шахматка
-// ---------------------------------------------------------------------------
+// =========================================================
+// КАЛЕНДАР ТА ШАХМАТКА
+// =========================================================
+
 function switchJournalSubTab(subTab) {
   const calView = document.getElementById("journal-view-calendar");
   const statsView = document.getElementById("journal-view-stats");

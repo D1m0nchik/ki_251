@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from database import get_db_pool
 
-GROUP_ID = 2658  # ID групи КІ-25-1 в системі розкладу ІФНТУНГ
+GROUP_ID = 2658  # ID групи КІ-25-1 в системі ІФНТУНГ
 BASE_URL = "https://online.nung.edu.ua/schedule/view"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
@@ -31,10 +31,18 @@ def extract_meet_url(text: str) -> str:
     return ""
 
 def clean_text_segment(text: str) -> str:
-    t = text.replace('\xa0', ' ').replace('\u200b', ' ').strip()
-    return re.sub(r'\s+', ' ', t)
+    if not text:
+        return ""
+    t = text.replace('\xa0', ' ').replace('\u200b', ' ')
+    # Нормалізуємо всі можливі види апострофів до класичного
+    t = t.replace('`', "'").replace('’', "'").replace('ʼ', "'")
+    return re.sub(r'\s+', ' ', t).strip()
 
 async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
+    """
+    Завантажує та розбирає розклад з сайту ІФНТУНГ з точним виділенням
+    назви дисципліни, викладача, типу пари та аудиторії.
+    """
     if not sdate or not edate:
         now_dt = datetime.now(KYIV_TZ)
         sdate = now_dt.strftime("%d.%m.%Y")
@@ -57,7 +65,7 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
                     return False
                 html = await response.text()
     except Exception as e:
-        print("Помилка підключення до сайту ІФНТУНГ:", e)
+        print("Помилка з'єднання з сайтом ІФНТУНГ:", e)
         return False
 
     soup = BeautifulSoup(html, "html.parser")
@@ -87,15 +95,15 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
 
     parsed_lessons = []
 
-    # Регулярні вирази для точного розбору
-    teacher_ranks = r'(?:доцент|професор|асистент|викладач|ст\.?\s*викладач|ст\.?\s*викл\.?|доц\.|проф\.|ас\.)'
-    ukr_word = r'[А-ЯЄІЇҐ][а-яєіїґ\'’`ʼА-ЯЄІЇҐ\-]+'
-    teacher_pattern = re.compile(rf'({teacher_ranks}\s+)?{ukr_word}(?:\s+{ukr_word}){{1,2}}')
-    
-    room_pattern = re.compile(r'(\d+[\.\-][А-Яа-яA-Za-z0-9]+(?:\.ауд|\s*ауд)?\.?|дистанційно|онлайн)', re.I)
-    stream_pattern = re.compile(r'(?:Збірна\s+група|Потік|Група)[^\(\)]*(?:\([^\)]*\))?', re.I)
-    subgroup_pattern = re.compile(r'\(?\s*підгр\.?\s*([12])\s*\)?', re.I)
-    type_bracket_pattern = re.compile(r'\(\s*([ЛL]ек|[ЛL]|[ЛL]аб|[ПP]р|[СC]ем)\s*\)', re.I)
+    # Регулярні вирази
+    room_regex = re.compile(r'(\d+[\.\-][А-Яа-яA-Za-z0-9]+(?:\.ауд|\s*ауд)?\.?|дистанційно|онлайн)', re.I)
+    teacher_regex = re.compile(
+        r'(?:доцент|професор|асистент|викладач|ст\.?\s*викладач|ст\.?\s*викл\.?|доц\.|проф\.|ас\.)\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+(?:\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+)?',
+        re.I
+    )
+    stream_regex = re.compile(r'(?:Збірна\s+група|Потік|Група)\s+[^(\n\r]+(?:\([^\)]*\))?', re.I)
+    subgroup_regex = re.compile(r'\(?\s*підгр\.?\s*([12])\s*\)?', re.I)
+    type_regex = re.compile(r'\(\s*([ЛL]ек|[ЛL]|[ЛL]аб|[ПP]р|[СC]ем)\s*\)', re.I)
 
     for item in lesson_items:
         raw_text = clean_text_segment(item.get_text(" ", strip=True))
@@ -122,7 +130,7 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
         if not item_date:
             continue
 
-        # 1. Посилання (Google Meet / Zoom / Moodle)
+        # 1. Посилання (Meet, Zoom, Moodle)
         meet_url = ""
         for a in item.find_all("a", href=True):
             f_meet = extract_meet_url(a['href'])
@@ -133,28 +141,21 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
         if not meet_url:
             meet_url = extract_meet_url(raw_text)
 
-        working_text = raw_text
+        working = raw_text
 
-        # Видаляємо номер пари та дату, якщо вони є у тексті
-        working_text = re.sub(r'^[1-7]\s*(?:пара|п\.|\))\s*', '', working_text)
+        # 2. Очищення від дати і номера пари
+        working = re.sub(r'^[1-7]\s*(?:пара|п\.|\))\s*', '', working)
         if item_date:
-            working_text = working_text.replace(item_date, '')
+            working = working.replace(item_date, '')
         if item_dow:
-            working_text = working_text.replace(item_dow, '')
-
-        # 2. Підгрупа
-        target_sg = 0
-        sg_m = subgroup_pattern.search(working_text)
-        if sg_m:
-            target_sg = int(sg_m.group(1))
-            working_text = subgroup_pattern.sub('', working_text)
+            working = working.replace(item_dow, '')
 
         # 3. Аудиторія
         room = ""
-        r_m = room_pattern.search(working_text)
+        r_m = room_regex.search(working)
         if r_m:
             room = r_m.group(1).strip()
-            working_text = working_text[:r_m.start()] + " " + working_text[r_m.end():]
+            working = working[:r_m.start()] + " " + working[r_m.end():]
             if "дистанцій" in room.lower() or "онлайн" in room.lower():
                 room = "Дистанційно"
             else:
@@ -163,52 +164,58 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
         elif meet_url:
             room = "Онлайн (Google Meet)"
 
-        # 4. Викладач (підтримує Мар'ян, Слабінога тощо)
+        # 4. Викладач (з підтримкою апострофів у Мар'ян тощо)
         teacher = ""
-        t_m = teacher_pattern.search(working_text)
+        t_m = teacher_regex.search(working)
         if t_m:
             teacher = clean_text_segment(t_m.group(0))
-            working_text = working_text[:t_m.start()] + " " + working_text[t_m.end():]
+            working = working[:t_m.start()] + " " + working[t_m.end():]
 
-        # 5. Видалення сміття потоку / збірної групи
-        working_text = stream_pattern.sub('', working_text)
+        # 5. Потік / Збірна група (вирізаємо повністю)
+        working = stream_regex.sub('', working)
 
-        # 6. Тип пари (Лек, Лаб, Пр)
+        # 6. Підгрупа
+        target_sg = 0
+        sg_m = subgroup_regex.search(working)
+        if sg_m:
+            target_sg = int(sg_m.group(1))
+            working = subgroup_regex.sub('', working)
+
+        # 7. Тип заняття (Лек, Лаб, Пр)
         lesson_type = "Лек"
-        type_m = type_bracket_pattern.search(working_text)
-        if type_m:
-            t_code = type_m.group(1).upper()
-            if 'ЛАБ' in t_code or 'LАБ' in t_code:
+        tp_m = type_regex.search(working)
+        if tp_m:
+            code = tp_m.group(1).upper()
+            if 'ЛАБ' in code or 'LАБ' in code:
                 lesson_type = "Лаб"
-            elif 'ПР' in t_code or 'PR' in t_code or 'PР' in t_code:
+            elif 'ПР' in code or 'PR' in code or 'PР' in code:
                 lesson_type = "Пр"
             else:
                 lesson_type = "Лек"
-            working_text = working_text[:type_m.start()] + " " + working_text[type_m.end():]
+            working = working[:tp_m.start()] + " " + working[tp_m.end():]
         else:
-            if "лаб" in working_text.lower():
+            if "лаб" in working.lower():
                 lesson_type = "Лаб"
-            elif "пр" in working_text.lower() or "практ" in working_text.lower():
+            elif "пр" in working.lower() or "практ" in working.lower():
                 lesson_type = "Пр"
 
-        # 7. Вибіркова дисципліна
+        # 8. Вибіркова дисципліна
         elective_num = 0
         if "вибіркова 2" in raw_text.lower() or "вибіркова №2" in raw_text.lower():
             elective_num = 2
-        elif "вибіркова 1" in raw_text.lower() or "вибіркова №1" in raw_text.lower() or working_text.strip().startswith("*"):
+        elif "вибіркова 1" in raw_text.lower() or "вибіркова №1" in raw_text.lower() or working.strip().startswith("*"):
             elective_num = 1
 
-        # 8. Чиста назва дисципліни
-        subject = working_text
+        # 9. Чиста назва дисципліни
+        subject = clean_text_segment(working)
         subject = re.sub(r'https?://[^\s<>"]+', '', subject)
-        subject = re.sub(r'[\(\)\,\;\:\.\-]+$', '', subject.strip()).strip()
+        subject = re.sub(r'\(\s*(?:Лек|Л|Лаб|Пр|Сем)\s*\)', '', subject, flags=re.I)
+        subject = re.sub(r'[\,\;\:\.\-]+$', '', subject).strip()
         subject = re.sub(r'^\s*[\,\;\:\.\-]+', '', subject).strip()
         subject = clean_text_segment(subject)
 
         if not subject:
             subject = "Заняття"
-        if len(subject) > 80:
-            subject = subject[:77] + "..."
 
         parsed_lessons.append({
             "date_str": item_date,
@@ -247,5 +254,5 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
                      l["subject"], l["lesson_type"], l["teacher"], l["room"], l["target_subgroup"],
                      l["meet_url"], l["elective_num"])
 
-    print(f"[{datetime.now(KYIV_TZ).strftime('%H:%M:%S')}] Оновлено {len(parsed_lessons)} занять з сайту ІФНТУНГ.")
+    print(f"[{datetime.now(KYIV_TZ).strftime('%H:%M:%S')}] Успішно оновлено {len(parsed_lessons)} занять з сайту ІФНТУНГ.")
     return True

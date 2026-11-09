@@ -125,6 +125,7 @@ async function init() {
       loadGroupManagement().catch(e => console.error(e));
       loadGroupStats().catch(e => console.error(e));
       loadCalendarMonth(calCurrentYear, calCurrentMonth).catch(e => console.error(e));
+      loadScheduledBroadcasts().catch(e => console.error(e));
     }
 
     if (!currentUser.full_name || currentUser.full_name.split(" ").length < 2) {
@@ -155,6 +156,7 @@ async function refreshAllData(isBackground = false) {
     loadMyStats().catch(e => console.error(e));
     if (currentUser && currentUser.role === "starosta") {
       loadGroupStats().catch(e => console.error(e));
+      loadScheduledBroadcasts().catch(e => console.error(e));
     }
   } catch (e) {
     console.error("Помилка фонового оновлення:", e);
@@ -750,6 +752,99 @@ async function sendBroadcastMessage() {
   document.getElementById("broadcast-title").value = "";
   document.getElementById("broadcast-body").value = "";
   await loadCombinedFeed();
+}
+
+// ---------------------------------------------------------------------------
+// Заплановані відкладені сповіщення (Starosta)
+// ---------------------------------------------------------------------------
+function openScheduledBroadcastModal() {
+  const modal = document.getElementById("scheduled-broadcast-modal");
+  if (!modal) return;
+  modal.style.display = "flex";
+
+  const now = new Date();
+  now.setMinutes(now.getMinutes() + 15);
+  const pad = n => String(n).padStart(2, '0');
+  const defaultTimeStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  
+  const timeInput = document.getElementById("sched-broadcast-time");
+  if (timeInput) timeInput.value = defaultTimeStr;
+}
+
+function closeScheduledBroadcastModal() {
+  const modal = document.getElementById("scheduled-broadcast-modal");
+  if (modal) modal.style.display = "none";
+}
+
+async function submitScheduledBroadcast() {
+  const title = document.getElementById("sched-broadcast-title").value.trim();
+  const msg = document.getElementById("sched-broadcast-body").value.trim();
+  const timeVal = document.getElementById("sched-broadcast-time").value;
+
+  if (!title || !msg || !timeVal) {
+    alert("Будь ласка, заповніть тему, текст та дату/час відправки!");
+    return;
+  }
+
+  try {
+    await apiRequest("/api/broadcasts/schedule", "POST", {
+      title,
+      message: msg,
+      send_at: timeVal
+    });
+
+    closeScheduledBroadcastModal();
+    document.getElementById("sched-broadcast-title").value = "";
+    document.getElementById("sched-broadcast-body").value = "";
+
+    await loadScheduledBroadcasts();
+    if (tg && tg.showAlert) {
+      tg.showAlert("Сповіщення успішно заплановано! Бот надішле його групі у вказаний час.");
+    } else {
+      alert("Сповіщення успішно заплановано!");
+    }
+  } catch (err) {
+    alert("Помилка планування: " + err.message);
+  }
+}
+
+async function loadScheduledBroadcasts() {
+  const container = document.getElementById("scheduled-broadcasts-list");
+  if (!container) return;
+
+  try {
+    const list = await apiRequest("/api/broadcasts/scheduled");
+    if (!list || list.length === 0) {
+      container.innerHTML = "<p style='color: #8e8ea0; font-size: 12px; margin: 0;'>Немає запланованих відкладених сповіщень.</p>";
+      return;
+    }
+
+    container.innerHTML = "";
+    list.forEach(b => {
+      const item = document.createElement("div");
+      item.style.cssText = "background: #202130; border: 1px solid #2f3045; border-radius: 8px; padding: 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px;";
+      item.innerHTML = `
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${b.title}</div>
+          <div style="font-size: 11px; color: #74b9ff; margin-top: 2px;">⏰ Буде надіслано: <b>${b.send_at_str}</b></div>
+        </div>
+        <button onclick="deleteScheduledBroadcastItem(${b.id})" style="background: rgba(255, 71, 87, 0.2); border: 1px solid #ff4757; color: #ff6b81; padding: 4px 8px; border-radius: 6px; font-size: 11px; cursor: pointer; white-space: nowrap;">Скасувати</button>
+      `;
+      container.appendChild(item);
+    });
+  } catch (err) {
+    console.error("Помилка списку запланованих повідомлень:", err);
+  }
+}
+
+async function deleteScheduledBroadcastItem(id) {
+  if (!confirm("Скасувати це відкладене сповіщення?")) return;
+  try {
+    await apiRequest(`/api/broadcasts/scheduled/delete?broadcast_id=${id}`, "POST");
+    await loadScheduledBroadcasts();
+  } catch (err) {
+    alert("Помилка видалення: " + err.message);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -158,113 +158,129 @@ def parse_lesson_segment(segment: str, date_str: str, dow_str: str, lesson_num: 
         "elective_num": elective_num
     }
 
+def find_date_and_dow(item, raw_text: str):
+    """Шукає дату в самому елементі або реверсивно в найближчих попередніх тегах."""
+    # 1. Безпосередньо в тексті
+    m = DATE_REGEX.search(raw_text)
+    if m:
+        date_str = m.group(1)
+        dow_m = DAYS_REGEX.search(raw_text)
+        dow_str = dow_m.group(1).capitalize() if dow_m else ""
+        return date_str, dow_str
+
+    # 2. Реверсивний пошук по попередніх блоках документа
+    for prev in item.find_all_previous(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'p', 'b', 'strong', 'th', 'td', 'caption']):
+        txt = clean_text(prev.get_text(" ", strip=True))
+        if len(txt) > 250:
+            continue
+        m = DATE_REGEX.search(txt)
+        if m:
+            date_str = m.group(1)
+            dow_m = DAYS_REGEX.search(txt)
+            dow_str = dow_m.group(1).capitalize() if dow_m else ""
+            return date_str, dow_str
+
+    # 3. Батьківські контейнери
+    curr = item.parent
+    while curr and curr.name not in ['body', 'html', '[document]']:
+        c_text = clean_text(curr.get_text(" ", strip=True))
+        m = DATE_REGEX.search(c_text)
+        if m:
+            date_str = m.group(1)
+            dow_m = DAYS_REGEX.search(c_text)
+            dow_str = dow_m.group(1).capitalize() if dow_m else ""
+            return date_str, dow_str
+        curr = curr.parent
+
+    return "", ""
+
 def parse_html_content(html: str) -> list:
     soup = BeautifulSoup(html, "html.parser")
     parsed_lessons = []
 
-    # Знаходимо всі блоки дат
-    all_elements = soup.find_all(['h1', 'h2', 'h3', 'h4', 'div', 'tr', 'p', 'td'])
-    current_date = ""
-    current_dow = ""
+    trs = soup.find_all('tr')
+    lesson_items = [tr for tr in trs if PAIR_REGEX.search(tr.get_text(" ", strip=True))]
 
-    # Знаходимо всі рядки занять
-    rows = soup.find_all('tr')
-    if not rows or len(rows) < 3:
-        rows = soup.find_all(['div', 'p'])
+    if not lesson_items:
+        divs = soup.find_all(['div', 'li', 'p'])
+        for el in divs:
+            txt = clean_text(el.get_text(" ", strip=True))
+            if PAIR_REGEX.search(txt):
+                has_child = any(PAIR_REGEX.search(c.get_text(" ", strip=True)) for c in el.find_all(['div', 'li', 'p']) if c != el)
+                if not has_child:
+                    lesson_items.append(el)
 
-    for item in rows:
+    for item in lesson_items:
         raw_text = clean_text(item.get_text(" ", strip=True))
-        if not raw_text:
+        p_match = PAIR_REGEX.search(raw_text)
+        if not p_match:
             continue
 
-        # Перевірка зміни дати
-        d_find = DATE_REGEX.search(raw_text)
-        dow_find = DAYS_REGEX.search(raw_text)
-        p_match = PAIR_REGEX.search(raw_text)
+        lesson_num = int(p_match.group(1))
+        item_date, item_dow = find_date_and_dow(item, raw_text)
 
-        if d_find and (dow_find or not p_match):
-            current_date = d_find.group(1)
-            if dow_find:
-                current_dow = dow_find.group(1).capitalize()
-            else:
-                try:
-                    dt = datetime.strptime(current_date, "%d.%m.%Y")
-                    current_dow = DAYS_UA[dt.weekday()]
-                except Exception:
-                    current_dow = ""
+        if not item_date:
+            continue
 
-        # Перевірка наявності пари
-        if p_match:
-            lesson_num = int(p_match.group(1))
+        if not item_dow:
+            try:
+                dt = datetime.strptime(item_date, "%d.%m.%Y")
+                item_dow = DAYS_UA[dt.weekday()]
+            except Exception:
+                pass
 
-            # Перевіряємо батьківський елемент на наявність дати
-            item_date = current_date
-            item_dow = current_dow
-            parent_text = item.parent.get_text(" ", strip=True) if item.parent else ""
-            parent_d = DATE_REGEX.search(parent_text)
-            if parent_d:
-                item_date = parent_d.group(1)
-                parent_dow = DAYS_REGEX.search(parent_text)
-                if parent_dow:
-                    item_dow = parent_dow.group(1).capitalize()
-                else:
-                    try:
-                        item_dow = DAYS_UA[datetime.strptime(item_date, "%d.%m.%Y").weekday()]
-                    except Exception:
-                        pass
+        meet_url = ""
+        for a in item.find_all('a', href=True):
+            f_meet = extract_meet_url(a['href'])
+            if f_meet:
+                meet_url = f_meet
+                break
 
-            if not item_date:
-                continue
-
-            meet_url = ""
-            for a in item.find_all('a', href=True):
-                f_meet = extract_meet_url(a['href'])
-                if f_meet:
-                    meet_url = f_meet
-                    break
-
-            segments = split_multi_subgroup_text(raw_text)
-            for seg in segments:
-                lesson_data = parse_lesson_segment(seg, item_date, item_dow, lesson_num, default_meet=meet_url)
-                parsed_lessons.append(lesson_data)
+        segments = split_multi_subgroup_text(raw_text)
+        for seg in segments:
+            lesson_data = parse_lesson_segment(seg, item_date, item_dow, lesson_num, default_meet=meet_url)
+            parsed_lessons.append(lesson_data)
 
     return parsed_lessons
 
 def parse_ical_content(raw_ics: str) -> list:
-    unfolded = re.sub(r'\r?\n[ \t]', '', raw_ics)
-    events = unfolded.split("BEGIN:VEVENT")
-    if len(events) <= 1:
+    if "BEGIN:VEVENT" not in raw_ics:
         return []
 
-    lessons = []
-    for ev in events[1:]:
-        dtstart_m = re.search(r'DTSTART(?:;[^:]+)?:(\d{8}T\d{2,6}Z?)', ev)
-        dtend_m = re.search(r'DTEND(?:;[^:]+)?:(\d{8}T\d{2,6}Z?)', ev)
-        summary_m = re.search(r'SUMMARY:(.*?)(?:\r?\n[A-Z]|\r?\n$)', ev, re.S)
-        location_m = re.search(r'LOCATION:(.*?)(?:\r?\n[A-Z]|\r?\n$)', ev, re.S)
-        desc_m = re.search(r'DESCRIPTION:(.*?)(?:\r?\n[A-Z]|\r?\n$)', ev, re.S)
+    unfolded = re.sub(r'\r?\n[ \t]', '', raw_ics)
+    raw_events = unfolded.split("BEGIN:VEVENT")
 
-        if not dtstart_m:
+    lessons = []
+    for block in raw_events[1:]:
+        lines = block.splitlines()
+        props = {}
+        for line in lines:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                k_clean = k.split(";")[0].strip().upper()
+                props[k_clean] = v.strip()
+
+        dtstart = props.get("DTSTART", "")
+        clean_dt = re.sub(r'[^0-9T]', '', dtstart)
+        if len(clean_dt) < 13:
             continue
 
-        raw_dt = dtstart_m.group(1)
-        y, m, d = raw_dt[0:4], raw_dt[4:6], raw_dt[6:8]
-        t_start = f"{raw_dt[9:11]}:{raw_dt[11:13]}"
-        
-        t_end = "09:20"
-        if dtend_m:
-            re_end = dtend_m.group(1)
-            t_end = f"{re_end[9:11]}:{re_end[11:13]}"
-
+        y, m, d = clean_dt[0:4], clean_dt[4:6], clean_dt[6:8]
+        t_start = f"{clean_dt[9:11]}:{clean_dt[11:13]}"
         date_str = f"{d}.{m}.{y}"
-        try:
-            day_of_week = DAYS_UA[datetime(int(y), int(m), int(d)).weekday()]
-        except Exception:
-            day_of_week = ""
 
-        summary = clean_text(summary_m.group(1).replace("\r", "").replace("\n", " ")) if summary_m else ""
-        room = clean_text(location_m.group(1).replace("\r", "").replace("\n", " ")) if location_m else ""
-        desc = desc_m.group(1).replace("\\n", "\n").replace("\r", "").strip() if desc_m else ""
+        dtend = props.get("DTEND", "")
+        clean_end = re.sub(r'[^0-9T]', '', dtend)
+        t_end = f"{clean_end[9:11]}:{clean_end[11:13]}" if len(clean_end) >= 13 else "09:20"
+
+        try:
+            dow = DAYS_UA[datetime(int(y), int(m), int(d)).weekday()]
+        except Exception:
+            dow = ""
+
+        summary = clean_text(props.get("SUMMARY", ""))
+        location = clean_text(props.get("LOCATION", ""))
+        desc = props.get("DESCRIPTION", "").replace("\\n", "\n").replace("\\,", ",")
 
         lesson_num = 1
         if t_start.startswith("08:"): lesson_num = 1
@@ -278,27 +294,29 @@ def parse_ical_content(raw_ics: str) -> list:
         meet_url = extract_meet_url(desc) or extract_meet_url(summary)
 
         target_sg = 0
-        if "підгр. 1" in summary.lower() or "1 підгр" in summary.lower(): target_sg = 1
-        elif "підгр. 2" in summary.lower() or "2 підгр" in summary.lower(): target_sg = 2
+        if "підгр. 1" in summary.lower() or "1 підгр" in summary.lower():
+            target_sg = 1
+        elif "підгр. 2" in summary.lower() or "2 підгр" in summary.lower():
+            target_sg = 2
 
         elective_num = 1 if (summary.startswith("*") or "вибіркова" in summary.lower()) else 0
 
         teacher = ""
         if desc:
-            lines = [l.strip() for l in desc.split("\n") if l.strip()]
-            if lines:
-                teacher = clean_text(lines[0])
+            desc_lines = [l.strip() for l in desc.splitlines() if l.strip()]
+            if desc_lines:
+                teacher = clean_text(desc_lines[0])
 
         lessons.append({
             "date_str": date_str,
-            "day_of_week": day_of_week,
+            "day_of_week": dow,
             "lesson_number": lesson_num,
             "time_start": t_start,
             "time_end": t_end,
             "subject": summary or "Заняття",
             "lesson_type": "Лаб" if "Лаб" in summary else "Лек",
             "teacher": teacher,
-            "room": room,
+            "room": location,
             "target_subgroup": target_sg,
             "meet_url": meet_url,
             "elective_num": elective_num
@@ -316,7 +334,7 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     connector = aiohttp.TCPConnector(ssl=False)
 
-    # 1. Спроба завантаження HTML розкладу
+    # 1. Завантаження через офіційну HTML сторінку розкладу
     try:
         params = {"group": GROUP_ID, "sdate": sdate.strip(), "edate": edate.strip()}
         async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
@@ -324,23 +342,25 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
                 if resp.status == 200:
                     html = await resp.text()
                     parsed_lessons = parse_html_content(html)
+                    print(f"[PARSER] Отримано {len(parsed_lessons)} занять з HTML.")
     except Exception as e:
         print(f"[PARSER] Помилка HTML-запиту: {e}")
 
-    # 2. Резервний канал: якщо HTML дав 0 результатів, звертаємось до iCal
+    # 2. Резервний канал: iCal експорт деканату
     if not parsed_lessons:
         try:
-            print("[PARSER] Застосовуємо резервний iCal канал експорту ІФНТУНГ...")
+            print("[PARSER] Використовуємо резервний iCal експорт...")
             async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
                 async with session.get(ICAL_URL, timeout=aiohttp.ClientTimeout(total=20)) as resp:
                     if resp.status == 200:
                         raw_ics = await resp.text()
                         parsed_lessons = parse_ical_content(raw_ics)
+                        print(f"[PARSER] Отримано {len(parsed_lessons)} занять з iCal.")
         except Exception as e:
             print(f"[PARSER] Помилка iCal-запиту: {e}")
 
     if not parsed_lessons:
-        print("[PARSER] Не вдалося знайти жодної пари.")
+        print("[PARSER] Не вдалося знайти занять у жодному джерелі.")
         return False
 
     pool = await get_db_pool()
@@ -382,5 +402,5 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
                          l["subject"], l["lesson_type"], l["teacher"], l["room"], l["target_subgroup"],
                          l["meet_url"], l["elective_num"])
 
-    print(f"[PARSER] Успішно збережено в БД {len(parsed_lessons)} занять.")
+    print(f"[PARSER] Успішно збережено в БД {len(parsed_lessons)} пар.")
     return True

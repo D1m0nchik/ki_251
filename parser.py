@@ -5,9 +5,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from database import get_db_pool
 
-GROUP_ID = 2658  # ID групи КІ-25-1 в системі ІФНТУНГ
+GROUP_ID = 2658  # ID групи КІ-25-1 в системі розкладу ІФНТУНГ
 BASE_URL = "https://online.nung.edu.ua/schedule/view"
-ICAL_URL = "https://dekanat.nung.edu.ua/cgi-bin/timetable_export.cgi?req_type=rozklad&req_mode=group&OBJ_ID=-2281&req_format=iCal&coding_mode=UTF8&bs=ok&fk=1"
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 LESSON_TIMES = {
@@ -21,6 +20,19 @@ LESSON_TIMES = {
 }
 
 DAYS_UA = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
+
+DATE_REGEX = re.compile(r'(\d{2}\.\d{2}\.\d{4})')
+DAYS_REGEX = re.compile(r'(понеділок|вівторок|середа|четвер|п\'ятниця|субота|неділя)', re.I)
+PAIR_REGEX = re.compile(r'([1-7])\s*(?:пара|п\.|\))', re.I)
+
+ROOM_REGEX = re.compile(r'(\d+[\.\-][А-Яа-яA-Za-z0-9]+(?:\.ауд|\s*ауд)?\.?|дистанційно|онлайн)', re.I)
+TEACHER_REGEX = re.compile(
+    r'((?:доцент|професор|асистент|викладач|ст\.?\s*викладач|ст\.?\s*викл\.?|доц\.|проф\.|ас\.)\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+(?:\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+)?)',
+    re.I
+)
+STREAM_REGEX = re.compile(r'(?:Збірна\s+група|Потік|Група)[^(\n\r]*(?:\([^\)]*\))?', re.I)
+SUBGROUP_REGEX = re.compile(r'\(?\s*підгр\.?\s*([12])\s*\)?', re.I)
+TYPE_REGEX = re.compile(r'\(\s*([ЛL]ек|[ЛL]|[ЛL]аб|[ПP]р|[СC]ем)\s*\)', re.I)
 
 def extract_meet_url(text: str) -> str:
     if not text:
@@ -40,17 +52,8 @@ def clean_text(text: str) -> str:
     t = t.replace('`', "'").replace('’', "'").replace('ʼ', "'")
     return re.sub(r'\s+', ' ', t).strip()
 
-ROOM_REGEX = re.compile(r'(\d+[\.\-][А-Яа-яA-Za-z0-9]+(?:\.ауд|\s*ауд)?\.?|дистанційно|онлайн)', re.I)
-TEACHER_REGEX = re.compile(
-    r'((?:доцент|професор|асистент|викладач|ст\.?\s*викладач|ст\.?\s*викл\.?|доц\.|проф\.|ас\.)\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+(?:\s+[А-ЯЄІЇҐ][а-яєіїґ\'\-]+)?)',
-    re.I
-)
-STREAM_REGEX = re.compile(r'(?:Збірна\s+група|Потік|Група)[^(\n\r]*(?:\([^\)]*\))?', re.I)
-SUBGROUP_REGEX = re.compile(r'\(?\s*підгр\.?\s*([12])\s*\)?', re.I)
-TYPE_REGEX = re.compile(r'\(\s*([ЛL]ек|[ЛL]|[ЛL]аб|[ПP]р|[СC]ем)\s*\)', re.I)
-
 def split_multi_subgroup_text(raw_text: str) -> list:
-    """Якщо в одному рядку злиплися дві підгрупи, розбиває їх на 2 окремі частини за аудиторією."""
+    """Розділяє пари, де 1-ша та 2-га підгрупи склеєні в один текст."""
     has_sg1 = bool(re.search(r'підгр\.?\s*1', raw_text, re.I))
     has_sg2 = bool(re.search(r'підгр\.?\s*2', raw_text, re.I))
 
@@ -64,16 +67,9 @@ def split_multi_subgroup_text(raw_text: str) -> list:
 
     return [clean_text(raw_text)]
 
-def parse_single_lesson_segment(segment: str, current_date: str, current_dow: str, lesson_num: int, default_meet: str = "") -> dict:
+def parse_lesson_segment(segment: str, date_str: str, dow_str: str, lesson_num: int, default_meet: str = "") -> dict:
     t_start, t_end = LESSON_TIMES.get(lesson_num, ("08:00", "09:20"))
     working = segment
-
-    # Видаляємо номер пари та дату, якщо вони є у тексті
-    working = re.sub(r'^[1-7]\s*(?:пара|п\.|\))\s*', '', working)
-    if current_date:
-        working = working.replace(current_date, '')
-    if current_dow:
-        working = working.replace(current_dow, '')
 
     # 1. Посилання Meet
     meet_url = default_meet or extract_meet_url(working)
@@ -127,15 +123,16 @@ def parse_single_lesson_segment(segment: str, current_date: str, current_dow: st
         elif "пр" in working.lower():
             lesson_type = "Пр"
 
-    # 7. Вибіркова дисципліна
+    # 7. Вибіркова
     elective_num = 0
     if "вибіркова 2" in segment.lower() or "вибіркова №2" in segment.lower():
         elective_num = 2
     elif "вибіркова 1" in segment.lower() or "вибіркова №1" in segment.lower() or working.strip().startswith("*"):
         elective_num = 1
 
-    # 8. Чиста назва дисципліни
+    # 8. Чиста назва
     subject = clean_text(working)
+    subject = re.sub(r'^[1-7]\s*(?:пара|п\.|\))\s*', '', subject)
     subject = re.sub(r'https?://[^\s<>"]+', '', subject)
     subject = re.sub(r'\(\s*(?:Лек|Л|Лаб|Пр|Сем)\s*\)', '', subject, flags=re.I)
     subject = re.sub(r'[\,\;\:\.\-]+$', '', subject).strip()
@@ -146,8 +143,8 @@ def parse_single_lesson_segment(segment: str, current_date: str, current_dow: st
         subject = "Заняття"
 
     return {
-        "date_str": current_date,
-        "day_of_week": current_dow,
+        "date_str": date_str,
+        "day_of_week": dow_str,
         "lesson_number": lesson_num,
         "time_start": t_start,
         "time_end": t_end,
@@ -160,73 +157,30 @@ def parse_single_lesson_segment(segment: str, current_date: str, current_dow: st
         "elective_num": elective_num
     }
 
-async def fetch_html_schedule(sdate: str, edate: str):
-    params = {"group": GROUP_ID, "sdate": sdate, "edate": edate}
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    connector = aiohttp.TCPConnector(ssl=False)
+def find_date_for_item(item, raw_text: str):
+    """Шукає дату в самому елементі, в батьківських контейнерах або в попередніх тегах."""
+    # 1. Безпосередньо в тексті
+    m = DATE_REGEX.search(raw_text)
+    if m:
+        return m.group(1)
 
-    async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
-        async with session.get(BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-            if resp.status != 200:
-                return None
-            return await resp.text()
+    # 2. Вгору по DOM-дереву (батьківські блоки дня)
+    curr = item.parent
+    while curr and curr.name not in ['html', 'body', '[document]']:
+        p_text = curr.get_text(" ", strip=True)
+        m = DATE_REGEX.search(p_text)
+        if m:
+            return m.group(1)
+        curr = curr.parent
 
-def parse_html_content(html: str) -> list:
-    soup = BeautifulSoup(html, "html.parser")
-    date_regex = re.compile(r'(\d{2}\.\d{2}\.\d{4})')
-    days_regex = re.compile(r'(понеділок|вівторок|середа|четвер|п\'ятниця|субота|неділя)', re.I)
-    pair_regex = re.compile(r'([1-7])\s*(?:пара|п\.|\))', re.I)
+    # 3. Назад по DOM (найближчий попередній текстовий вузол із датою)
+    prev = item.find_previous(string=DATE_REGEX)
+    if prev:
+        m = DATE_REGEX.search(str(prev))
+        if m:
+            return m.group(1)
 
-    rows = soup.find_all('tr')
-    if not rows or len(rows) < 3:
-        rows = soup.find_all(['div', 'p'])
-
-    current_date = ""
-    current_dow = ""
-    lessons = []
-
-    for item in rows:
-        raw_text = clean_text(item.get_text(" ", strip=True))
-        if not raw_text:
-            continue
-
-        d_match = date_regex.search(raw_text)
-        dow_match = days_regex.search(raw_text)
-        p_match = pair_regex.search(raw_text)
-
-        if d_match and (dow_match or not p_match):
-            current_date = d_match.group(1)
-            if dow_match:
-                current_dow = dow_match.group(1).capitalize()
-            else:
-                try:
-                    dt = datetime.strptime(current_date, "%d.%m.%Y")
-                    current_dow = DAYS_UA[dt.weekday()]
-                except Exception:
-                    current_dow = ""
-
-        if p_match:
-            if not current_date and d_match:
-                current_date = d_match.group(1)
-            if not current_date:
-                continue
-
-            lesson_num = int(p_match.group(1))
-
-            meet_url = ""
-            for a in item.find_all('a', href=True):
-                m_found = extract_meet_url(a['href'])
-                if m_found:
-                    meet_url = m_found
-                    break
-
-            # Розбиваємо випадок, коли 1 і 2 підгрупа склеєні в одному рядку
-            segments = split_multi_subgroup_text(raw_text)
-            for seg in segments:
-                parsed_l = parse_single_lesson_segment(seg, current_date, current_dow, lesson_num, default_meet=meet_url)
-                lessons.append(parsed_l)
-
-    return lessons
+    return ""
 
 async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
     if not sdate or not edate:
@@ -234,19 +188,80 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
         sdate = (now_dt - timedelta(days=now_dt.weekday())).strftime("%d.%m.%Y")
         edate = (now_dt + timedelta(days=21)).strftime("%d.%m.%Y")
 
-    parsed_lessons = []
-    try:
-        html = await fetch_html_schedule(sdate, edate)
-        if html:
-            parsed_lessons = parse_html_content(html)
-    except Exception as e:
-        print("Помилка HTML парсингу:", e)
+    params = {"group": GROUP_ID, "sdate": sdate.strip(), "edate": edate.strip()}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    connector = aiohttp.TCPConnector(ssl=False)
 
+    print(f"[PARSER] Запит до ІФНТУНГ: {BASE_URL} (з {sdate} по {edate})")
+    try:
+        async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
+            async with session.get(BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                if resp.status != 200:
+                    print(f"[PARSER] Помилка: HTTP {resp.status}")
+                    return False
+                html = await resp.text()
+    except Exception as e:
+        print(f"[PARSER] Помилка з'єднання: {e}")
+        return False
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Шукаємо рядки занять
+    raw_candidates = soup.find_all('tr')
+    lesson_items = [tr for tr in raw_candidates if PAIR_REGEX.search(tr.get_text())]
+
+    if not lesson_items:
+        # Резервний пошук по div/p
+        for el in soup.find_all(['div', 'p', 'li']):
+            if PAIR_REGEX.search(el.get_text()):
+                has_child = any(PAIR_REGEX.search(c.get_text()) for c in el.find_all(['div', 'p', 'li']) if c != el)
+                if not has_child:
+                    lesson_items.append(el)
+
+    print(f"[PARSER] Знайдено {len(lesson_items)} блоків занять на сторінці.")
+    if not lesson_items:
+        return False
+
+    parsed_lessons = []
+
+    for item in lesson_items:
+        raw_text = clean_text(item.get_text(" ", strip=True))
+        p_match = PAIR_REGEX.search(raw_text)
+        if not p_match:
+            continue
+
+        lesson_num = int(p_match.group(1))
+        item_date = find_date_for_item(item, raw_text)
+        if not item_date:
+            continue
+
+        try:
+            dt = datetime.strptime(item_date, "%d.%m.%Y")
+            item_dow = DAYS_UA[dt.weekday()]
+        except Exception:
+            item_dow = ""
+
+        # Meet посилання
+        meet_url = ""
+        for a in item.find_all('a', href=True):
+            f_meet = extract_meet_url(a['href'])
+            if f_meet:
+                meet_url = f_meet
+                break
+
+        # Розділяємо підгрупи, якщо вони склеєні
+        segments = split_multi_subgroup_text(raw_text)
+        for seg in segments:
+            lesson_data = parse_lesson_segment(seg, item_date, item_dow, lesson_num, default_meet=meet_url)
+            parsed_lessons.append(lesson_data)
+
+    print(f"[PARSER] Успішно розібрано {len(parsed_lessons)} пар для запису в БД.")
     if not parsed_lessons:
         return False
 
     pool = await get_db_pool()
     if not pool:
+        print("[PARSER] Помилка: немає підключення до пулу БД.")
         return False
 
     async with pool.acquire() as conn:
@@ -284,5 +299,5 @@ async def fetch_and_save_schedule(sdate: str = "", edate: str = "") -> bool:
                          l["subject"], l["lesson_type"], l["teacher"], l["room"], l["target_subgroup"],
                          l["meet_url"], l["elective_num"])
 
-    print(f"[{datetime.now(KYIV_TZ).strftime('%H:%M:%S')}] Успішно збережено {len(parsed_lessons)} занять.")
+    print(f"[PARSER] База даних успішно оновлена. Збережено {len(parsed_lessons)} пар.")
     return True

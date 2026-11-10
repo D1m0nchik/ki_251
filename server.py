@@ -317,7 +317,7 @@ async def get_schedule(
 
     now_kyiv = datetime.now(KYIV_TZ)
 
-    # За замовчуванням показуємо починаючи з понеділка поточного тижня на 14 днів вперед
+    # За замовчуванням показуємо від понеділка поточного тижня на 14 днів вперед
     if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
         filter_start = datetime.strptime(sdate.strip()[:10], "%d.%m.%Y").date()
         filter_end = datetime.strptime(edate.strip()[:10], "%d.%m.%Y").date()
@@ -437,7 +437,7 @@ async def sync_month_schedule(
         if not success:
             raise HTTPException(
                 status_code=502, 
-                detail="Сайт університету не повернув розкладу для групи КІ-25-1 або розклад ще не опубліковано."
+                detail="Сайт університету тимчасово не віддає пари або розклад на цей період порожній."
             )
             
         return {"status": "success", "synced_from": sdate, "synced_to": edate}
@@ -486,6 +486,7 @@ async def get_polls(current_user: dict = Depends(get_current_user)):
             votes = await conn.fetch("SELECT option_id, telegram_id, custom_text FROM poll_votes WHERE poll_id = $1", p_dict["id"])
             total_voters = len(set([v["telegram_id"] for v in votes]))
             my_votes = [v["option_id"] for v in votes if v["telegram_id"] == tg_id]
+            
             my_custom_vote = next((v["custom_text"] for v in votes if v["telegram_id"] == tg_id and v["option_id"] == 999), "")
 
             for opt in opts:

@@ -55,8 +55,10 @@ LESSON_TIMES = {
     7: ("17:20", "18:40")
 }
 
+DAYS_UA = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
+
 # ---------------------------------------------------------------------------
-# Rate Limiting (захист від блокування додатку)
+# Rate Limiting (захист пам'яті сервера)
 # ---------------------------------------------------------------------------
 class InMemoryRateLimiter:
     def __init__(self, requests_limit: int, time_window_seconds: int):
@@ -315,7 +317,7 @@ async def get_schedule(
 
     now_kyiv = datetime.now(KYIV_TZ)
 
-    # Якщо діапазон не задано явно, показуємо від ПОНЕДІЛКА поточного тижня на 14 днів уперед
+    # За замовчуванням показуємо починаючи з понеділка поточного тижня на 14 днів вперед
     if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
         filter_start = datetime.strptime(sdate.strip()[:10], "%d.%m.%Y").date()
         filter_end = datetime.strptime(edate.strip()[:10], "%d.%m.%Y").date()
@@ -422,7 +424,7 @@ async def sync_month_schedule(
         user = await get_current_user(x_telegram_init_data=x_telegram_init_data)
         caller_id = str(user["telegram_id"])
 
-    # Дозволяємо старості запускати синхронізацію без блокування таймером
+    # Дозволяємо старості запускати оновлення без блокування таймером
     if caller_id != str(STAROSTA_TELEGRAM_ID):
         await sync_month_limiter.check(f"sync_month_{caller_id}")
 
@@ -430,8 +432,17 @@ async def sync_month_schedule(
         now_dt = datetime.now(KYIV_TZ)
         sdate = (now_dt - timedelta(days=now_dt.weekday())).strftime("%d.%m.%Y")
         edate = (now_dt + timedelta(days=21)).strftime("%d.%m.%Y")
+        
         success = await fetch_and_save_schedule(sdate=sdate, edate=edate)
-        return {"status": "success" if success else "empty", "synced_from": sdate, "synced_to": edate}
+        if not success:
+            raise HTTPException(
+                status_code=502, 
+                detail="Сайт університету не повернув розкладу для групи КІ-25-1 або розклад ще не опубліковано."
+            )
+            
+        return {"status": "success", "synced_from": sdate, "synced_to": edate}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка парсера: {str(e)}")
 
@@ -475,7 +486,6 @@ async def get_polls(current_user: dict = Depends(get_current_user)):
             votes = await conn.fetch("SELECT option_id, telegram_id, custom_text FROM poll_votes WHERE poll_id = $1", p_dict["id"])
             total_voters = len(set([v["telegram_id"] for v in votes]))
             my_votes = [v["option_id"] for v in votes if v["telegram_id"] == tg_id]
-            
             my_custom_vote = next((v["custom_text"] for v in votes if v["telegram_id"] == tg_id and v["option_id"] == 999), "")
 
             for opt in opts:

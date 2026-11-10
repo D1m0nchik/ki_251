@@ -88,7 +88,7 @@ poll_create_limiter = InMemoryRateLimiter(requests_limit=15, time_window_seconds
 reminder_create_limiter = InMemoryRateLimiter(requests_limit=15, time_window_seconds=60)
 
 # ---------------------------------------------------------------------------
-# Telegram initData авторизація
+# Авторизація Telegram initData
 # ---------------------------------------------------------------------------
 def verify_telegram_data(init_data: str) -> dict:
     if not init_data or not init_data.strip():
@@ -317,7 +317,7 @@ async def get_schedule(
 
     now_kyiv = datetime.now(KYIV_TZ)
 
-    # За замовчуванням показуємо починаючи з понеділка поточного тижня на 14 днів вперед
+    # За замовчуванням показуємо від понеділка поточного тижня на 14 днів вперед
     if sdate and edate and len(sdate.strip()) >= 10 and len(edate.strip()) >= 10:
         filter_start = datetime.strptime(sdate.strip()[:10], "%d.%m.%Y").date()
         filter_end = datetime.strptime(edate.strip()[:10], "%d.%m.%Y").date()
